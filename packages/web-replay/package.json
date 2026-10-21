@@ -1,0 +1,25 @@
+{
+  "name": "@bugcapsule/web-replay",
+  "version": "0.3.0",
+  "description": "Playwright runner that replays BugCapsule web capsules against the real app for the bugcapsule CLI.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": { "bugcapsule-web-runner": "./bin/bugcapsule-web-runner.js" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "bin", "README.md"],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@bugcapsule/web": "0.3.0",
+    "playwright-core": "1.63.0"
+  },
+  "engines": { "node": ">=20" },
+  "repository": { "type": "git", "url": "https://github.com/draz26648/bug_capsule_web_sdk", "directory": "packages/web-replay" }
+}

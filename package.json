@@ -1,0 +1,30 @@
+{
+  "name": "bugcapsule-web-workspace",
+  "private": true,
+  "description": "BugCapsule web SDK monorepo: @bugcapsule/web, @bugcapsule/react, @bugcapsule/web-replay and the shop demo.",
+  "type": "module",
+  "workspaces": [
+    "packages/web",
+    "packages/react",
+    "packages/web-replay",
+    "examples/shop"
+  ],
+  "scripts": {
+    "build": "npm run build -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay",
+    "typecheck": "npm run typecheck -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay",
+    "test": "npm run test:unit && npm run test:browser",
+    "test:unit": "node --import tsx --test 'test/unit/**/*.test.ts'",
+    "test:browser": "playwright test -c test/browser/playwright.config.ts",
+    "pack:all": "mkdir -p dist-packages && npm pack -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay --pack-destination dist-packages"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^24.19.2",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.23.15",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
