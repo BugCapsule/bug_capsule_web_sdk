@@ -1,5 +1,5 @@
 import type { OutboxLimits, UploadResult } from '../types.js';
-import type { SdkStorage, StoredCapsule } from './idb.js';
+import type { SdkStorage, StoreName, StoredCapsule } from './idb.js';
 
 export const DEFAULT_OUTBOX_LIMITS: Required<OutboxLimits> = Object.freeze({
   maxCount: 10,
@@ -7,7 +7,34 @@ export const DEFAULT_OUTBOX_LIMITS: Required<OutboxLimits> = Object.freeze({
   maxAgeMs: 7 * 24 * 60 * 60 * 1000,
 });
 
+/** monitoring-v1 §1: the envelope outbox is smaller (30 envelopes / 5 MiB, 7 days). */
+export const DEFAULT_ENVELOPE_OUTBOX_LIMITS: Required<OutboxLimits> = Object.freeze({
+  maxCount: 30,
+  maxBytes: 5 * 1024 * 1024,
+  maxAgeMs: 7 * 24 * 60 * 60 * 1000,
+});
+
 export const MAX_SAVED_CAPTURES = 20;
+
+/** Which store an outbox uses and what a valid record looks like. */
+export interface OutboxStore {
+  store: StoreName;
+  retryKey: string;
+  defaults: Required<OutboxLimits>;
+  /** Records failing this are deleted unsent. */
+  isValid: (bytes: Uint8Array) => boolean;
+}
+
+const isGzip = (bytes: Uint8Array) => bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b;
+
+export const CAPSULE_STORE: OutboxStore = { store: 'outbox', retryKey: 'outbox.retry', defaults: DEFAULT_OUTBOX_LIMITS, isValid: isGzip };
+/** Envelope JSON (UTF-8), sent gzipped by the transport. */
+export const ENVELOPE_STORE: OutboxStore = {
+  store: 'envelopes',
+  retryKey: 'envelopes.retry',
+  defaults: DEFAULT_ENVELOPE_OUTBOX_LIMITS,
+  isValid: (bytes) => bytes.length >= 2 && bytes[0] === 0x7b,
+};
 
 interface RetryState {
   failures: number;
@@ -16,7 +43,6 @@ interface RetryState {
   fromServer?: boolean;
 }
 
-const RETRY_KEY = 'outbox.retry';
 
 /**
  * Capsules waiting for upload (port of the Flutter `UploadOutbox`), stored in
@@ -34,6 +60,9 @@ const RETRY_KEY = 'outbox.retry';
  *   (like an app restart) unless the server asked for a later time. Permanent
  *   rejections and corrupt records are deleted.
  * * Nothing relies on an upload finishing while the page unloads.
+ *
+ * The monitoring envelope outbox is the same class over its own store
+ * ({@link ENVELOPE_STORE}), with its own limits, backoff state and lock.
  */
 export class UploadOutbox {
   readonly limits: Required<OutboxLimits>;
@@ -47,19 +76,20 @@ export class UploadOutbox {
     private readonly lockName = 'bugcapsule:outbox',
     private readonly now: () => number = () => Date.now(),
     private readonly random: () => number = Math.random,
+    private readonly kind: OutboxStore = CAPSULE_STORE,
   ) {
-    this.limits = { ...DEFAULT_OUTBOX_LIMITS, ...limits };
+    this.limits = { ...kind.defaults, ...limits };
   }
 
   async open(): Promise<void> {
-    await this.storage.update('outbox', (records) => ({ remove: this.evictions(records), result: undefined }));
+    await this.storage.update(this.kind.store, (records) => ({ remove: this.evictions(records), result: undefined }));
     // A reload retries at once, like an app restart; only a server deadline is kept.
     const state = await this.retryState();
     if (state.retryAt !== null && !state.fromServer) await this.setRetryState({ failures: 0, retryAt: null });
   }
 
   entries(): Promise<StoredCapsule[]> {
-    return this.storage.list('outbox');
+    return this.storage.list(this.kind.store);
   }
 
   /** Queues a capsule; false when it was not queued (closed, too large, storage error, evicted at once). */
@@ -74,7 +104,7 @@ export class UploadOutbox {
       bytes,
     };
     try {
-      return await this.storage.update('outbox', (records) => {
+      return await this.storage.update(this.kind.store, (records) => {
         const all = [...records.filter((r) => r.id !== record.id), record];
         const remove = this.evictions(all);
         return { put: remove.includes(record.id) ? [] : [record], remove, result: !remove.includes(record.id) };
@@ -102,7 +132,7 @@ export class UploadOutbox {
 
   /** Deletes every queued capsule (kill switch). */
   async purge(): Promise<number> {
-    return this.storage.update('outbox', (records) => ({ remove: records.map((r) => r.id), result: records.length }));
+    return this.storage.update(this.kind.store, (records) => ({ remove: records.map((r) => r.id), result: records.length }));
   }
 
   async retryAt(): Promise<number | null> {
@@ -111,7 +141,7 @@ export class UploadOutbox {
 
   private async retryState(): Promise<RetryState> {
     try {
-      return (await this.storage.getKv<RetryState>(RETRY_KEY)) ?? { failures: 0, retryAt: null };
+      return (await this.storage.getKv<RetryState>(this.kind.retryKey)) ?? { failures: 0, retryAt: null };
     } catch {
       return { failures: 0, retryAt: null };
     }
@@ -119,7 +149,7 @@ export class UploadOutbox {
 
   private async setRetryState(s: RetryState): Promise<void> {
     try {
-      await this.storage.setKv(RETRY_KEY, s);
+      await this.storage.setKv(this.kind.retryKey, s);
     } catch {
       /* best effort */
     }
@@ -198,8 +228,8 @@ export class UploadOutbox {
     for (const entry of queue) {
       if (this.closed || !opts.allowed()) break;
       const bytes = entry.bytes;
-      if (bytes.length < 2 || bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
-        await this.storage.remove('outbox', [entry.id]).catch(() => {});
+      if (!this.kind.isValid(bytes)) {
+        await this.storage.remove(this.kind.store, [entry.id]).catch(() => {});
         continue;
       }
       const result = await opts.upload(bytes);
@@ -218,7 +248,7 @@ export class UploadOutbox {
       failures = 0;
       await this.setRetryState({ failures: 0, retryAt: null });
       this.attempts.delete(entry.capsuleId);
-      await this.storage.remove('outbox', [entry.id]).catch(() => {});
+      await this.storage.remove(this.kind.store, [entry.id]).catch(() => {});
     }
     if (opts.onlyId && mine === null) mine = { status: 'retryLater', message: 'queued' };
     return mine;
