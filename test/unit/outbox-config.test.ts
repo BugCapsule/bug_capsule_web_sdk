@@ -131,7 +131,22 @@ describe('RemoteConfigController', () => {
 
   it('parses and clamps the backend config; rejects wrong types', () => {
     const c = parseRemoteConfig({ sampleRate: 7, configTtlSeconds: 999_999, maxCapsuleBytes: 0, redactKeys: ['a', 1] }, 5);
-    assert.deepEqual(c, { enabled: true, sampleRate: 1, maxCapsuleBytes: 1, captureNetworkBodies: true, redactKeys: ['a', '1'], configTtlSeconds: 86_400, fetchedAtMs: 5 });
+    assert.deepEqual(c, {
+      enabled: true,
+      sampleRate: 1,
+      maxCapsuleBytes: 1,
+      captureNetworkBodies: true,
+      redactKeys: ['a', '1'],
+      configTtlSeconds: 86_400,
+      fetchedAtMs: 5,
+      // monitoring-v1 §10 defaults
+      monitoringEnabled: true,
+      errorSampleRate: 1,
+      tracesSampleRate: null,
+      sessionTracking: true,
+      maxBreadcrumbs: 100,
+      tracePropagationTargets: null,
+    });
     assert.throws(() => parseRemoteConfig({ enabled: 'yes' }));
   });
 

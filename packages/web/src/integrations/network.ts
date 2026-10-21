@@ -2,6 +2,8 @@ import { base64Decode, base64Encode, utf8Decode, utf8Encode } from '../core/json
 import type { EligibilityBuilder } from '../core/model.js';
 import { RequestKeyBuilder, type EndpointRule, type EndpointRuleInit, type HttpFixture } from '../core/network.js';
 import type { RecordedWindow } from '../core/recorder.js';
+import { mergeBaggage } from '../monitoring/tracing.js';
+import type { HttpObservation } from '../monitoring/types.js';
 import type { BugCapsuleIntegration, BugCapsuleSession, ReplayContext } from '../types.js';
 
 export interface NetworkOptions {
@@ -95,6 +97,10 @@ async function readCapped(stream: ReadableStream<Uint8Array>, limit: number): Pr
  * unchanged. Streaming request bodies are never read (keyed without a hash,
  * recorded as `omitted`). `text/event-stream` responses are recorded when
  * headers arrive.
+ *
+ * It is also the one place monitoring observes `fetch`/XHR (spans,
+ * breadcrumbs, `traceparent`/`baggage`), recording or not; those headers are
+ * added after the request is keyed and recorded, and never during replay.
  */
 export class NetworkIntegration implements BugCapsuleIntegration {
   readonly name: string;
@@ -118,6 +124,15 @@ export class NetworkIntegration implements BugCapsuleIntegration {
       ...(this.opts.fetch ? { 'network.fetch': 'supported' } : {}),
       ...(this.opts.xhr ? { 'network.xhr': 'supported' } : {}),
     };
+  }
+
+  /** Wraps `fetch`. */
+  get coversFetch(): boolean {
+    return this.opts.fetch;
+  }
+  /** Wraps `XMLHttpRequest`. */
+  get coversXhr(): boolean {
+    return this.opts.xhr;
   }
 
   setUp(session: BugCapsuleSession): void {
@@ -298,13 +313,37 @@ export class NetworkIntegration implements BugCapsuleIntegration {
     const self = this;
     const wrapped = function bugCapsuleFetch(this: unknown, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
       const session = self.session;
-      if (!session || (!session.isRecording && !session.replay)) return previous.call(globalThis, input, init);
-      return session.replay ? self.replayFetch(session.replay, previous, input, init) : self.captureFetch(previous, input, init);
+      if (!session) return previous.call(globalThis, input, init);
+      if (session.replay) return self.replayFetch(session.replay, previous, input, init);
+      const observation = self.observeFetch(session, input, init);
+      if (!observation && !session.isRecording) return previous.call(globalThis, input, init);
+      const send = observation?.headers
+        ? (i: RequestInfo | URL, n?: RequestInit) => previous.call(globalThis, i, withTraceHeaders(i, n, observation.headers!))
+        : previous;
+      const p = session.isRecording ? self.captureFetch(send, input, init) : send.call(globalThis, input, init);
+      if (observation) {
+        p.then(
+          (r) => observation.finish({ status: r.status }),
+          (e) => observation.finish({ error: e }),
+        );
+      }
+      return p;
     };
     g.fetch = wrapped as typeof fetch;
     this.restoreFns.push(() => {
       if (g.fetch === wrapped) g.fetch = previous;
     });
+  }
+
+  private observeFetch(session: BugCapsuleSession, input: RequestInfo | URL, init?: RequestInit): HttpObservation | null {
+    const monitor = session.monitor;
+    if (!monitor) return null;
+    try {
+      const { method, url } = this.fetchMethodUrl(input, init);
+      return monitor.httpStart({ kind: 'fetch', method, url });
+    } catch {
+      return null;
+    }
   }
 
   private fetchMethodUrl(input: RequestInfo | URL, init?: RequestInit): { method: string; url: string; headers: Headers; signal: AbortSignal | null } {
@@ -503,9 +542,10 @@ export class NetworkIntegration implements BugCapsuleIntegration {
     proto.send = function (this: XMLHttpRequest, body?: Document | XMLHttpRequestBodyInit | null) {
       const st = states.get(this);
       const session = self.session;
-      if (!st || !session || (!session.isRecording && !session.replay)) return originals.send.call(this, body);
+      if (!st || !session) return originals.send.call(this, body);
       if (session.replay) return self.replayXhr(session.replay, this, st, body ?? null, () => originals.send.call(this, body));
-      self.captureXhr(this, st, body ?? null);
+      if (session.isRecording) self.captureXhr(this, st, body ?? null);
+      self.observeXhr(session, this, st, originals.setRequestHeader);
       return originals.send.call(this, body);
     };
     proto.abort = function (this: XMLHttpRequest) {
@@ -517,6 +557,31 @@ export class NetworkIntegration implements BugCapsuleIntegration {
       return originals.abort.call(this);
     };
     this.restoreFns.push(() => Object.assign(proto, originals));
+  }
+
+  /** Monitoring: span + breadcrumb, and trace headers set past the recorded ones. */
+  private observeXhr(session: BugCapsuleSession, xhr: XMLHttpRequest, st: XhrState, setHeader: XMLHttpRequest['setRequestHeader']): void {
+    const monitor = session.monitor;
+    if (!monitor) return;
+    let observation: HttpObservation | null = null;
+    try {
+      observation = monitor.httpStart({ kind: 'xhr', method: st.method, url: st.url });
+      const headers = observation?.headers;
+      if (headers) {
+        if (st.headers.traceparent === undefined) setHeader.call(xhr, 'traceparent', headers.traceparent!);
+        // XHR joins repeated headers with ", ": only add ours when the app sent no BugCapsule baggage.
+        const existing = st.headers.baggage;
+        if (headers.baggage && mergeBaggage(existing, headers.baggage) !== existing) setHeader.call(xhr, 'baggage', headers.baggage);
+      }
+    } catch {
+      // never break the app's request
+    }
+    if (!observation) return;
+    let failed: unknown;
+    xhr.addEventListener('error', () => (failed = new TypeError('XMLHttpRequest error')));
+    xhr.addEventListener('timeout', () => (failed = new DOMException('XMLHttpRequest timeout', 'TimeoutError')));
+    xhr.addEventListener('abort', () => (failed = new DOMException('XMLHttpRequest aborted', 'AbortError')));
+    xhr.addEventListener('loadend', () => observation!.finish(xhr.status > 0 ? { status: xhr.status } : { error: failed }));
   }
 
   private xhrBody(body: Document | XMLHttpRequestBodyInit | null, headers: Record<string, string>): RequestBody {
@@ -698,6 +763,24 @@ interface XhrState {
   async: boolean;
   replaying?: boolean;
   abortReplay?: (() => void) | undefined;
+}
+
+/** The request init with `traceparent` (unless the app set one) and `baggage` (merged) added. */
+function withTraceHeaders(input: RequestInfo | URL, init: RequestInit | undefined, trace: Record<string, string>): RequestInit | undefined {
+  try {
+    return addTraceHeaders(input, init, trace);
+  } catch {
+    return init; // the request goes out as the app made it
+  }
+}
+
+function addTraceHeaders(input: RequestInfo | URL, init: RequestInit | undefined, trace: Record<string, string>): RequestInit {
+  const req = typeof Request !== 'undefined' && input instanceof Request ? input : null;
+  // fetch(request, { headers }) replaces the request's headers, so start from what fetch would send.
+  const headers = new Headers(init?.headers ?? req?.headers);
+  if (trace.traceparent && !headers.has('traceparent')) headers.set('traceparent', trace.traceparent);
+  if (trace.baggage) headers.set('baggage', mergeBaggage(headers.get('baggage'), trace.baggage));
+  return { ...init, headers };
 }
 
 function parseRawHeaders(raw: string): Record<string, string> {

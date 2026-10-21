@@ -27,6 +27,8 @@ async function init(page: Page, extra: Record<string, unknown> = {}) {
         integrations: [networkIntegration(), historyIntegration(), localStorageIntegration({ allowPrefixes: ['shop.'] })],
         ...extra,
       });
+      // Session time starts at the first frame after init (the anchor); input before it is not replayed.
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
     },
     { BACKEND, INGEST, extra },
   );

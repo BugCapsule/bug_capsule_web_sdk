@@ -1,4 +1,5 @@
 import type { BugCapsuleBackendConfig, UploadResult } from './types.js';
+import { streamGzip } from './core/codec.js';
 import type { SdkStorage } from './storage/idb.js';
 
 /** Capture config the backend can change at runtime (kill switch, sampling, bodies, redaction). */
@@ -11,6 +12,15 @@ export interface RemoteCaptureConfig {
   configTtlSeconds: number;
   /** Wall clock (epoch ms) of the successful fetch. */
   fetchedAtMs: number;
+  /** monitoring-v1 §10: `false` stops envelopes (capsules unaffected). */
+  monitoringEnabled: boolean;
+  errorSampleRate: number;
+  /** Null when the backend did not send it (the app's rate applies). */
+  tracesSampleRate: number | null;
+  sessionTracking: boolean;
+  maxBreadcrumbs: number;
+  /** When set, replaces the app's `tracePropagationTargets`. */
+  tracePropagationTargets: string[] | null;
 }
 
 /** Parses `/v1/sdk/config` (or the cache); throws on wrong types, clamps values. */
@@ -26,6 +36,10 @@ export function parseRemoteConfig(j: Record<string, unknown>, fetchedAtMs?: numb
   const rate = field<number>('sampleRate', 'number') ?? 1;
   const ttl = field<number>('configTtlSeconds', 'number') ?? 300;
   const maxBytes = field<number>('maxCapsuleBytes', 'number') ?? 5 * 1024 * 1024;
+  const unit = (v: number) => (Number.isNaN(v) ? 0 : Math.min(1, Math.max(0, v)));
+  const traces = field<number>('tracesSampleRate', 'number');
+  const breadcrumbs = field<number>('maxBreadcrumbs', 'number') ?? 100;
+  const targets = field<unknown[]>('tracePropagationTargets', 'array');
   return {
     enabled: field<boolean>('enabled', 'boolean') ?? true,
     sampleRate: Number.isNaN(rate) ? 0 : Math.min(1, Math.max(0, rate)),
@@ -34,6 +48,12 @@ export function parseRemoteConfig(j: Record<string, unknown>, fetchedAtMs?: numb
     redactKeys: (field<unknown[]>('redactKeys', 'array') ?? []).map(String),
     configTtlSeconds: Math.min(86_400, Math.max(0, Math.floor(ttl))),
     fetchedAtMs: fetchedAtMs ?? field<number>('fetchedAtMs', 'number') ?? 0,
+    monitoringEnabled: field<boolean>('monitoringEnabled', 'boolean') ?? true,
+    errorSampleRate: unit(field<number>('errorSampleRate', 'number') ?? 1),
+    tracesSampleRate: traces === undefined ? null : unit(traces),
+    sessionTracking: field<boolean>('sessionTracking', 'boolean') ?? true,
+    maxBreadcrumbs: Number.isNaN(breadcrumbs) ? 0 : Math.min(100, Math.max(0, Math.floor(breadcrumbs))),
+    tracePropagationTargets: targets === undefined ? null : targets.map(String),
   };
 }
 
@@ -45,6 +65,12 @@ export type ConfigFetchResult =
 export interface BugCapsuleTransport {
   fetchConfig(): Promise<ConfigFetchResult>;
   upload(bytes: Uint8Array): Promise<UploadResult>;
+  /**
+   * `POST /v1/envelope` with the envelope JSON (monitoring-v1 §1). Optional
+   * so older test transports keep working: without it envelopes stay queued.
+   * `keepalive` is set for the page-unload session update.
+   */
+  sendEnvelope?(json: string, options?: { keepalive?: boolean }): Promise<UploadResult>;
 }
 
 function retryAfterMs(res: Response): number | undefined {
@@ -121,6 +147,47 @@ export class BackendTransport implements BugCapsuleTransport {
       }
       const code = typeof json?.code === 'string' ? json.code : `HTTP ${res.status}`;
       // 4xx other than 401/408/429 will never succeed: drop instead of retrying.
+      const retry = res.status >= 500 || res.status === 401 || res.status === 408 || res.status === 429;
+      return { status: retry ? 'retryLater' : 'rejected', message: code, ...optRetry(retryAfterMs(res)) };
+    } catch (e) {
+      return { status: 'retryLater', message: String(e) };
+    }
+  }
+
+  /**
+   * Bodies over 1 KiB are gzipped when `CompressionStream` exists (the
+   * backend's CORS config must allow `Content-Encoding`). Keepalive requests
+   * (page unload) go uncompressed: compression is async and may not finish.
+   */
+  async sendEnvelope(json: string, options: { keepalive?: boolean } = {}): Promise<UploadResult> {
+    const raw = new TextEncoder().encode(json);
+    const headers: Record<string, string> = { Authorization: `Bearer ${this.backend.ingestKey}`, 'Content-Type': 'application/json' };
+    let body: Uint8Array = raw;
+    if (!options.keepalive && raw.length > 1024 && typeof CompressionStream !== 'undefined') {
+      try {
+        body = await streamGzip.gzip(raw);
+        headers['Content-Encoding'] = 'gzip';
+      } catch {
+        body = raw;
+      }
+    }
+    try {
+      const res = await this.nativeFetch.call(globalThis, this.url('/v1/envelope'), {
+        method: 'POST',
+        headers,
+        body: body as BodyInit,
+        credentials: 'omit',
+        ...(options.keepalive ? { keepalive: true } : { signal: this.signal(this.timeoutMs) }),
+      });
+      let code = `HTTP ${res.status}`;
+      try {
+        const parsed: unknown = JSON.parse(await res.text());
+        if (typeof parsed === 'object' && parsed !== null && typeof (parsed as { code?: unknown }).code === 'string') code = (parsed as { code: string }).code;
+      } catch {
+        // not JSON
+      }
+      // 200: stored; rejected items are never retried (monitoring-v1 §1).
+      if (res.status === 200 || res.status === 202) return { status: 'uploaded' };
       const retry = res.status >= 500 || res.status === 401 || res.status === 408 || res.status === 429;
       return { status: retry ? 'retryLater' : 'rejected', message: code, ...optRetry(retryAfterMs(res)) };
     } catch (e) {

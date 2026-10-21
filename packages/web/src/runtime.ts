@@ -8,7 +8,10 @@ import { FlightRecorder } from './core/recorder.js';
 import { Redactor } from './core/redaction.js';
 import { validateCapsuleDocument } from './core/validator.js';
 import { HistoryIntegration } from './integrations/history.js';
+import { NetworkIntegration } from './integrations/network.js';
 import { StateIntegration } from './integrations/state.js';
+import { Monitor } from './monitoring/client.js';
+import type { CaptureContext, Mechanism, MonitorHooks, MonitoringLink } from './monitoring/types.js';
 import { BackendTransport, configScope, RemoteConfigController, type BugCapsuleTransport, type RemoteCaptureConfig } from './remote-config.js';
 import { detectReplayBridge, ReplayEngine, type ReplayBridge } from './replay/engine.js';
 import { openStorage, type SdkStorage } from './storage/idb.js';
@@ -105,6 +108,14 @@ export class Runtime implements BugCapsuleSession {
   private readonly warned = new Set<string>();
   private readonly frameworks = new Set<string>();
   private pressed = new Set<number>();
+  /** monitoring-v1 client; null when monitoring is off, without a backend, and in replay. */
+  monitorClient: Monitor | null = null;
+  /** Integrations monitoring installed because the app did not configure them (never recorded). */
+  private readonly monitoringIntegrations: BugCapsuleIntegration[] = [];
+  /** `manifest.monitoring` for capsules about to be written, by capsule id. */
+  private readonly capsuleLinks = new Map<string, MonitoringLink>();
+  /** The latest event sent for each failure signature (manual captures link to it). */
+  private readonly failureLinks = new Map<string, MonitoringLink>();
 
   constructor(
     readonly config: Readonly<BugCapsuleConfig>,
@@ -140,6 +151,9 @@ export class Runtime implements BugCapsuleSession {
   get replay(): ReplayContext | null {
     return this.engine;
   }
+  get monitor(): MonitorHooks | null {
+    return this.engine ? null : this.monitorClient;
+  }
 
   now(): number {
     return Math.round(perfNow() - this.start0);
@@ -165,6 +179,8 @@ export class Runtime implements BugCapsuleSession {
   }
 
   record(type: string, data: Record<string, unknown> = {}): void {
+    const monitor = this.monitorClient;
+    if (monitor && !this.engine) this.guard(() => monitor.onRecord(type, data));
     if (!this.recording) return;
     const recorder = this.recorder;
     if (!recorder) return;
@@ -198,8 +214,8 @@ export class Runtime implements BugCapsuleSession {
     }
   }
 
-  reportError(error: unknown): void {
-    this.onError(error);
+  reportError(error: unknown, context: CaptureContext = {}): void {
+    this.onError(error, context.mechanism ?? { type: 'manual', handled: true }, context);
   }
 
   // ---------------------------------------------------------------- startup
@@ -270,6 +286,7 @@ export class Runtime implements BugCapsuleSession {
       await this.remote.loadCached();
     }
     const cached = this.remote?.current ?? null;
+    if (transport && this.config.monitoring !== false && cached?.enabled !== false) this.monitorClient = this.createMonitor(storage, transport);
     this.currentRedactor = this.baseRedactor(cached?.redactKeys ?? []);
     this.captureBodies = (this.config.captureNetworkBodies ?? true) && (cached?.captureNetworkBodies ?? true);
     this.maxCapsuleBytes = cached?.maxCapsuleBytes ?? this.maxCapsuleBytes;
@@ -283,6 +300,11 @@ export class Runtime implements BugCapsuleSession {
       }
     }
     this.installLifecycle();
+    if (this.monitorClient) {
+      this.installMonitoringIntegrations();
+      await this.monitorClient.start();
+    }
+    if (this.recording || this.monitorClient) this.installErrorHandlers();
     if (this.recording) {
       const launch: Checkpoint = {
         kind: 'launch',
@@ -300,8 +322,84 @@ export class Runtime implements BugCapsuleSession {
     if (this.disposed || !this.remote) return;
     void this.remote
       .refresh()
-      .then(() => this.flushOutbox())
+      .then(() => Promise.all([this.flushOutbox(), this.monitorClient?.flushNow()]))
       .catch((e) => this.warnOnce(`startup sync failed: ${String(e)}`));
+  }
+
+  private createMonitor(storage: SdkStorage, transport: BugCapsuleTransport): Monitor {
+    return new Monitor({
+      config: this.config,
+      mode: this.mode,
+      redactor: () => this.currentRedactor,
+      storage,
+      transport,
+      remote: () => this.remote?.current ?? null,
+      uploadsAllowed: () => this.uploadsAllowed,
+      ensureFresh: () => this.remote?.ensureFresh() ?? Promise.resolve(),
+      refreshRemote: () => void this.remote?.refresh(),
+      random: this.sampleRandom,
+      log: (m) => this.warnOnce(m),
+      sdk: { name: SDK_NAME, version: SDK_VERSION },
+      lockName: `bugcapsule:${this.config.storageName ?? 'bugcapsule'}:envelopes`,
+      writeCapsule: (capsuleId, note, link) => {
+        if (!this.recording || !this.recorder) return false;
+        if (link) this.capsuleLinks.set(capsuleId, link);
+        this.writeCapsule(this.lastFailure, { note }, capsuleId).catch((e) => this.warnOnce(`capture failed: ${String(e)}`));
+        return true;
+      },
+    });
+  }
+
+  /**
+   * Monitoring observes fetch/XHR and the History API through the network
+   * and history integrations. When the app did not configure them, it sets
+   * up its own instances on a session view that never records.
+   */
+  private installMonitoringIntegrations(): void {
+    const networks = this.integrations.filter((i): i is NetworkIntegration => i instanceof NetworkIntegration);
+    const fetchCovered = networks.some((n) => n.coversFetch);
+    const xhrCovered = networks.some((n) => n.coversXhr);
+    const view = this.monitoringView();
+    const extra: BugCapsuleIntegration[] = [];
+    if (!fetchCovered || !xhrCovered) extra.push(new NetworkIntegration({ fetch: !fetchCovered, xhr: !xhrCovered }, 'monitoring.network'));
+    if (!this.integrations.some((i) => i instanceof HistoryIntegration)) extra.push(new HistoryIntegration());
+    for (const integration of extra) {
+      try {
+        void integration.setUp?.(view);
+        this.monitoringIntegrations.push(integration);
+      } catch (e) {
+        this.warnOnce(`monitoring ${integration.name} setup failed: ${String(e)}`);
+      }
+    }
+  }
+
+  private monitoringView(): BugCapsuleSession {
+    const rt = this;
+    return {
+      get config() {
+        return rt.config;
+      },
+      get mode() {
+        return rt.mode;
+      },
+      isRecording: false,
+      isReplaying: false,
+      get redactor() {
+        return rt.redactor;
+      },
+      captureNetworkBodies: false,
+      get maxBodyBytes() {
+        return rt.maxBodyBytes;
+      },
+      now: () => rt.now(),
+      record: () => {},
+      replay: null,
+      reportError: (e) => rt.reportError(e),
+      nativeFetch: rt.nativeFetch,
+      get monitor() {
+        return rt.monitor;
+      },
+    };
   }
 
   private effectiveRate(remote: RemoteCaptureConfig | null): number {
@@ -319,15 +417,15 @@ export class Runtime implements BugCapsuleSession {
   }
 
   private installCapture(): void {
-    this.installErrorHandlers();
     if (this.config.capturePointers !== false) this.installPointers();
     this.checkpointTimer = setInterval(() => void this.periodicCheckpoint(), this.config.checkpointIntervalMs ?? 30_000);
   }
 
   private installErrorHandlers(): void {
     if (typeof addEventListener !== 'function') return;
-    const onError = (e: ErrorEvent) => this.guard(() => this.onError(e.error ?? new ErrorLike(e.message || 'Script error.')));
-    const onRejection = (e: PromiseRejectionEvent) => this.guard(() => this.onError(e.reason));
+    const onError = (e: ErrorEvent) =>
+      this.guard(() => this.onError(e.error ?? new ErrorLike(e.message || 'Script error.'), { type: 'onerror', handled: false }));
+    const onRejection = (e: PromiseRejectionEvent) => this.guard(() => this.onError(e.reason, { type: 'unhandledrejection', handled: false }));
     addEventListener('error', onError);
     addEventListener('unhandledrejection', onRejection);
     this.cleanups.push(() => {
@@ -464,43 +562,69 @@ export class Runtime implements BugCapsuleSession {
 
   // --------------------------------------------------------------- failures
 
-  private onError(error: unknown): void {
+  /**
+   * A failure: recorded (and maybe captured) for capsules, and sent as an
+   * error event; when a capsule is written for it, the event carries its
+   * `capsuleId` and the capsule `manifest.monitoring` (monitoring-v1 §4.3).
+   */
+  private onError(error: unknown, mechanism: Mechanism = { type: 'manual', handled: true }, context: CaptureContext = {}): void {
     if (this.config.ignoreError?.(error)) return;
-    this.handleFailure(exceptionFailure(error, this.now(), (s) => this.currentRedactor.scrubText(s)));
+    const failure = exceptionFailure(error, this.now(), (s) => this.currentRedactor.scrubText(s));
+    const capsuleId = this.handleFailure(failure);
+    const monitor = this.monitorClient;
+    if (!monitor || this.engine) return;
+    const eventId = monitor.captureError(error, { ...context, mechanism }, { capsuleId });
+    this.linkFailure(failure, capsuleId, eventId);
   }
 
   fail(assertionId: string, message = ''): void {
-    this.handleFailure(assertionFailure(assertionId, message, this.now(), (s) => this.currentRedactor.scrubText(s)));
+    const failure = assertionFailure(assertionId, message, this.now(), (s) => this.currentRedactor.scrubText(s));
+    const capsuleId = this.handleFailure(failure);
+    const monitor = this.monitorClient;
+    if (!monitor || this.engine) return;
+    this.linkFailure(failure, capsuleId, monitor.captureAssertion(assertionId, failure.message, capsuleId));
   }
 
-  handleFailure(failure: FailureRecord): void {
+  private linkFailure(failure: FailureRecord, capsuleId: string | null, eventId: string | null): void {
+    if (!eventId || !this.monitorClient) return;
+    const link = this.monitorClient.linkFor(eventId);
+    this.failureLinks.set(failure.signature, link);
+    if (capsuleId) this.capsuleLinks.set(capsuleId, link);
+  }
+
+  /** Returns the id of the capsule it scheduled for this failure, if any. */
+  handleFailure(failure: FailureRecord): string | null {
     if (this.engine) {
       this.engine.onFailure(failure);
-      return;
+      return null;
     }
-    if (!this.recording) return;
+    if (!this.recording) return null;
     const { stack: _stack, ...withoutStack } = failure;
     this.record('failure', withoutStack as unknown as Record<string, unknown>);
     this.lastFailure = failure;
-    if (this.seenSignatures.has(failure.signature)) return;
+    if (this.seenSignatures.has(failure.signature)) return null;
     this.seenSignatures.add(failure.signature);
-    if (this.config.autoCaptureOnFailure === false) return;
-    if (this.capsulesWritten >= (this.config.maxCapsulesPerSession ?? 3)) return;
-    if (this.capturedSignatures.has(failure.signature)) return;
+    if (this.config.autoCaptureOnFailure === false) return null;
+    if (this.capsulesWritten >= (this.config.maxCapsulesPerSession ?? 3)) return null;
+    if (this.capturedSignatures.has(failure.signature)) return null;
     this.capturedSignatures.add(failure.signature);
+    const capsuleId = uuidV4();
     // Let the failure settle (follow-up events) before writing.
     setTimeout(() => {
-      this.writeCapsule(failure).then(
+      this.writeCapsule(failure, {}, capsuleId).then(
         (r) => r && console.debug(`[bugcapsule] captured ${r.capsuleId} (${r.eligibility.status})`),
         (e) => this.warnOnce(`capture failed: ${String(e)}`),
       );
     }, 300);
+    return capsuleId;
   }
 
   // ---------------------------------------------------------------- capsule
 
-  async writeCapsule(failure: FailureRecord | null, labels: Record<string, string> = {}): Promise<CaptureResult | null> {
+  async writeCapsule(failure: FailureRecord | null, labels: Record<string, string> = {}, capsuleId: string = uuidV4()): Promise<CaptureResult | null> {
     const recorder = this.recorder;
+    const link = this.capsuleLinks.get(capsuleId) ?? (failure ? this.failureLinks.get(failure.signature) : undefined);
+    this.capsuleLinks.delete(capsuleId);
     if (!this.recording || !recorder) return null;
     this.capsulesWritten++;
     const window = recorder.window();
@@ -542,7 +666,7 @@ export class Runtime implements BugCapsuleSession {
       format: 'bugcapsule.capsule',
       specVersion: 1,
       manifest: {
-        capsuleId: uuidV4(),
+        capsuleId,
         createdAt: new Date().toISOString(),
         mode: this.mode,
         app: {
@@ -583,6 +707,7 @@ export class Runtime implements BugCapsuleSession {
           : {}),
         runtime: { name: 'web', version: cut(browserVersion(), 200), language: 'javascript', ...(this.frameworks.size ? { frameworks: [...this.frameworks] } : {}) },
         capabilities,
+        ...(link ? { monitoring: { ...link } } : {}),
       },
       checkpoint: { ...window.checkpoint, t: window.checkpoint.t - anchor },
       events,
@@ -665,6 +790,7 @@ export class Runtime implements BugCapsuleSession {
   // ---------------------------------------------------------- remote config
 
   private applyRemote(_previous: RemoteCaptureConfig | null, next: RemoteCaptureConfig): void {
+    this.monitorClient?.applyRemote(next);
     this.maxCapsuleBytes = next.maxCapsuleBytes;
     if (!next.enabled) {
       this.disableCapture();
@@ -816,7 +942,8 @@ export class Runtime implements BugCapsuleSession {
 
   // ---------------------------------------------------------------- history
 
-  route(location: string, source?: string, action?: string): void {
+  route(location: string, source?: string, action?: string, routeName?: string): void {
+    if (!this.engine) this.monitorClient?.navigation(location, source ?? 'app', action, routeName);
     const history = this.integrations.find((i): i is HistoryIntegration => i instanceof HistoryIntegration);
     if (history) history.route(location, source, action);
     else this.record('route', { location: this.currentRedactor.redactUrl(location), ...(source ? { source } : {}), ...(action ? { action } : {}) });
@@ -826,8 +953,9 @@ export class Runtime implements BugCapsuleSession {
     this.disposed = true;
     this.stopRecording();
     this.remote?.dispose();
+    this.monitorClient?.dispose();
     for (const c of this.cleanups.reverse()) c();
-    for (const i of this.integrations) i.dispose?.();
+    for (const i of [...this.monitoringIntegrations.reverse(), ...this.integrations]) i.dispose?.();
     await this.outbox?.close();
   }
 }

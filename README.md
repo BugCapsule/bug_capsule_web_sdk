@@ -21,6 +21,7 @@ fix the code ─►  bugcapsule verify <id>       ─► FIXED 3/3
 | [`@bugcapsule/web`](packages/web) | Framework-independent SDK (TypeScript types included). `@bugcapsule/web/core` is the environment-neutral model/codec/redaction/request-key core. |
 | [`@bugcapsule/react`](packages/react) | Thin React helpers: actions, tracked inputs, state, error boundary, capture button, React Router listener (`@bugcapsule/react/react-router`). |
 | [`@bugcapsule/web-replay`](packages/web-replay) | Node + Playwright runner the CLI launches per replay attempt (dev dependency). |
+| [`@bugcapsule/cli`](packages/cli) | Build tooling: `sourcemaps inject` (debug ids) and `sourcemaps upload` for symbolicated stack traces. |
 | [`examples/shop`](examples/shop) | React demo with four planted bugs. |
 
 ## Quickstart
@@ -54,6 +55,20 @@ renderApp();
 Await `init` before rendering: in replay it restores storage and state
 there. Call it before any code keeps its own reference to `fetch`.
 
+The same `init` also turns on **monitoring** (errors, release health,
+tracing, user feedback; [docs/monitoring.md](docs/monitoring.md)). Add a
+`release` and, for performance data, a `tracesSampleRate`:
+
+```ts
+await BugCapsule.init({
+  …,
+  release: 'shop-web@1.4.0+52',
+  tracesSampleRate: 0.2,
+  tracePropagationTargets: ['api.example.com'],   // default: same origin
+});
+BugCapsule.setUser({ id: user.id });
+```
+
 ### Make more bugs replayable
 
 | Hook | Why |
@@ -79,6 +94,27 @@ import { BugCapsuleRouteListener } from '@bugcapsule/react/react-router';
   <BugCapsuleCaptureButton />              {/* QA builds only */}
 </BrowserRouter>
 ```
+
+## Monitoring
+
+Every page load (not only sampled capsule sessions) sends light envelopes to
+`POST /v1/envelope` ([monitoring-v1](../bug_capsule_backend/docs/monitoring-v1.md)):
+
+| Signal | How |
+|---|---|
+| Error events | `error`, `unhandledrejection`, `reportError`, `check`/`fail`, React error boundary and React 19 root callbacks, opt-in `console.error`, `captureException` / `captureMessage`. Frames parsed from Chromium, Firefox and Safari stacks with `inApp`, `debugImages` from injected debug ids, the `cause` chain, breadcrumbs derived from the flight recorder plus clicks, fetch/XHR, navigation and console, the scope (`setUser`, `setTag`, `setContext`, `withScope` …), `beforeSend`, fingerprints |
+| Capsule link | an event for a failure that gets a capsule carries `capsuleId`; the capsule carries `manifest.monitoring = {eventId, traceId, release, environment}` |
+| Release health | one session per page load, `crashed` on an unhandled error, `exited` on `pagehide` |
+| Tracing | pageload and navigation transactions (History API, React Router route patterns), `http.client` spans, resource / paint / long-task spans, web vitals (LCP, INP, CLS, FCP, TTFB), `startTransaction` / `startSpan`, `tracesSampleRate` / `tracesSampler`, `traceparent` + `baggage` to `tracePropagationTargets` |
+| User feedback | `captureFeedback`, and an opt-in themeable widget (`showFeedbackWidget`, `<BugCapsuleFeedbackWidget />`), optionally with a capsule |
+
+Envelopes are redacted with the capsule rules before they are stored, kept
+in their own IndexedDB outbox (30 envelopes / 5 MiB) and sent with the same
+backoff and `Retry-After` handling as capsules. Nothing is sent during
+replay, and the trace headers never enter capsules or request keys. The
+backend can lower sampling and turn monitoring off remotely; `monitoring:
+false` turns it off locally. Symbolication: `npx @bugcapsule/cli sourcemaps
+inject dist` then `sourcemaps upload` in CI ([packages/cli](packages/cli)).
 
 ## What is captured
 
@@ -208,14 +244,18 @@ more reason to keep such builds out of production.
 * Synchronous XHR is replayed without its recorded latency.
 * Cross-origin script errors without CORS headers arrive as `Script error.`.
 * Capsules replay only in the web runtime (no cross-runtime replay).
+* Monitoring: the active span of `startSpan` is shared page-wide while async
+  work runs (browsers have no async context); the final session update sent
+  during unload is not confirmed (its queued copy is retried on the next
+  load). See [docs/monitoring.md](docs/monitoring.md#limitations).
 
 ## Development
 
 ```bash
 npm install
 npm run build                 # packages/*/dist (the demo uses the built packages)
-npm run test:unit             # core conformance (shared fixtures), outbox, remote config
-npm run test:browser          # SDK in Chromium: capture, redaction, offline, kill switch, cross-tab, XHR, replay
+npm run test:unit             # core conformance (shared fixtures), outbox, remote config, monitoring, CLI
+npm run test:browser          # SDK in Chromium: capture, redaction, offline, kill switch, cross-tab, XHR, replay, monitoring, React
 npm run pack:all              # dist-packages/*.tgz for review (not published)
 ```
 
@@ -226,8 +266,8 @@ tests fail when they differ.
 ## Release procedure
 
 1. `npm run build && npm test` and the demo E2E ([examples/shop](examples/shop/README.md)).
-2. Bump the version in the three `package.json` files and `SDK_VERSION` in
-   `packages/web/src/runtime.ts` (written into every capsule).
+2. Bump the version in the four `package.json` files and `SDK_VERSION` in
+   `packages/web/src/runtime.ts` (written into every capsule and envelope).
 3. `npm run pack:all`, inspect the tarballs (`tar -tzf`), install them in a
    clean project and type-check (as done for 0.3.0).
 4. Publish from a clean checkout (`npm publish -w … --access public`) only
