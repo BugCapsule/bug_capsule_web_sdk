@@ -32,6 +32,9 @@ export interface BackendState {
   configFetches: number;
   /** Abort uploads at the network level (offline). */
   offline: boolean;
+  /** `POST /v1/envelope` bodies (decoded) with their request headers. */
+  envelopes: { body: Record<string, any>; headers: Record<string, string> }[];
+  envelopeStatus: number;
 }
 
 export function newBackend(): BackendState {
@@ -42,10 +45,12 @@ export function newBackend(): BackendState {
     uploads: [],
     configFetches: 0,
     offline: false,
+    envelopes: [],
+    envelopeStatus: 200,
   };
 }
 
-const cors = { 'access-control-allow-origin': ORIGIN, 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST', 'access-control-expose-headers': 'Retry-After' };
+const cors = { 'access-control-allow-origin': ORIGIN, 'access-control-allow-headers': 'authorization, content-type, content-encoding', 'access-control-allow-methods': 'GET, POST', 'access-control-expose-headers': 'Retry-After' };
 
 /** Serves the test page, a fake backend (CORS like bug_capsule_backend) and an app API. */
 export async function setUpRoutes(page: Page, backend: BackendState, api: (route: Route, url: URL) => Promise<void> | void = defaultApi): Promise<void> {
@@ -72,13 +77,20 @@ export async function setUpRoutes(page: Page, backend: BackendState, api: (route
         body: JSON.stringify(backend.uploadStatus < 300 ? { id: 'srv-' + backend.uploads.length } : { code: backend.uploadStatus === 403 ? 'capture_disabled' : 'unavailable' }),
       });
     }
+    if (url.pathname === '/v1/envelope') {
+      const raw = req.postDataBuffer() ?? Buffer.alloc(0);
+      const headers = await req.allHeaders();
+      const body = JSON.parse((headers['content-encoding'] === 'gzip' ? gunzipSync(raw) : raw).toString('utf8'));
+      if (backend.envelopeStatus === 200) backend.envelopes.push({ body, headers });
+      return route.fulfill({ status: backend.envelopeStatus, headers: { ...cors, 'content-type': 'application/json' }, body: JSON.stringify({ accepted: body.items.length, rejected: [] }) });
+    }
     return route.fulfill({ status: 404, headers: cors });
   });
   await page.context().route(`${API}/**`, (route) => api(route, new URL(route.request().url())));
 }
 
 export async function defaultApi(route: Route, url: URL): Promise<void> {
-  const h = { 'access-control-allow-origin': ORIGIN, 'access-control-allow-headers': 'content-type, authorization', 'content-type': 'application/json' };
+  const h = { 'access-control-allow-origin': ORIGIN, 'access-control-allow-headers': 'content-type, authorization, traceparent, baggage', 'content-type': 'application/json' };
   if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: h });
   switch (url.pathname) {
     case '/cart':
@@ -92,6 +104,11 @@ export async function defaultApi(route: Route, url: URL): Promise<void> {
     default:
       return route.fulfill({ status: 404, headers: h, body: '{}' });
   }
+}
+
+/** Every item of a type the fake backend received. */
+export function envelopeItems(backend: BackendState, type: string): Record<string, any>[] {
+  return backend.envelopes.flatMap((e) => e.body.items.filter((i: { type: string }) => i.type === type).map((i: { payload: unknown }) => i.payload));
 }
 
 export function decodeUpload(buf: Buffer): Record<string, any> {
