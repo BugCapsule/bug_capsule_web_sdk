@@ -1,0 +1,22 @@
+{
+  "name": "@bugcapsule/cli",
+  "version": "0.3.0",
+  "description": "BugCapsule build tooling for the web: inject debug ids into bundles and source maps, upload source maps for symbolication.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": { "bugcapsule-cli": "./bin/bugcapsule-cli.js" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "bin", "README.md"],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": { "node": ">=20" },
+  "repository": { "type": "git", "url": "https://github.com/draz26648/bug_capsule_web_sdk", "directory": "packages/cli" },
+  "keywords": ["bugcapsule", "sourcemaps", "debug-id", "symbolication"]
+}

@@ -3,6 +3,9 @@ import type { FixtureStore } from './core/network.js';
 import type { ReplaySettings } from './core/protocol.js';
 import type { RecordedWindow } from './core/recorder.js';
 import type { Redactor } from './core/redaction.js';
+import type { InAppMatcher } from './monitoring/stack.js';
+import type { PropagationTarget, TracesSampler } from './monitoring/tracing.js';
+import type { Breadcrumb, EventHint, EventPayload, MonitorHooks, TransactionPayload } from './monitoring/types.js';
 
 export interface BugCapsuleBackendConfig {
   /** e.g. `http://127.0.0.1:8787` locally, `https://bugcapsule.example.com` hosted. */
@@ -75,6 +78,58 @@ export interface BugCapsuleConfig {
   storageName?: string;
   /** Capture setup gets this long before the app continues without capture (default 5 s). */
   setupTimeoutMs?: number;
+
+  // ------------------------------------------------- monitoring (monitoring-v1)
+
+  /** `false` turns off errors, sessions, tracing and feedback (capsules unaffected). Default true. */
+  monitoring?: boolean;
+  /** e.g. `shop-web@1.4.0+52`. Omitted when not set. */
+  release?: string;
+  /** Default from `mode`: `production`, `qa`, `development` (debug). */
+  environment?: string;
+  dist?: string;
+  /** Share of error events sent (default 1; the backend can lower it). Fatal and capsule-linked events are always sent. */
+  errorSampleRate?: number;
+  /** Share of traces sent (default 0). The backend's `tracesSampleRate` overrides it unless `tracesSampler` is set. */
+  tracesSampleRate?: number;
+  /** Decides per trace root; return a rate or a boolean. */
+  tracesSampler?: TracesSampler;
+  /**
+   * URLs that get `traceparent` + `baggage` (substring strings, `"/regex/"`
+   * strings or RegExps). Default: same origin as the page. The backend's
+   * list, when set, replaces it.
+   */
+  tracePropagationTargets?: PropagationTarget[];
+  /** One release-health session per page load (default true). */
+  enableAutoSessionTracking?: boolean;
+  /** An unhandled error marks the session `crashed` (default true). */
+  crashOnUnhandled?: boolean;
+  /** Default 100 (the maximum). */
+  maxBreadcrumbs?: number;
+  /** Last look at every error event after redaction rules ran on it; return null to drop it. */
+  beforeSend?: (event: EventPayload, hint: EventHint) => EventPayload | null;
+  beforeSendTransaction?: (transaction: TransactionPayload) => TransactionPayload | null;
+  /** Return null to drop the breadcrumb. */
+  beforeBreadcrumb?: (breadcrumb: Breadcrumb, hint?: Record<string, unknown>) => Breadcrumb | null;
+  /** Frames whose script URL matches are in-app (substring or RegExp); wins over `inAppExcludes`. */
+  inAppIncludes?: InAppMatcher[];
+  inAppExcludes?: InAppMatcher[];
+  /** Attach a stack trace to `captureMessage` events (default false). */
+  attachStacktrace?: boolean;
+  /** Default false: no IP address. True sends `user.ipAddress: "{{auto}}"`. */
+  sendDefaultPii?: boolean;
+  /** LCP, INP, CLS, FCP, TTFB on pageload transactions (default true). */
+  enableWebVitals?: boolean;
+  /** A `ui.action.click` transaction for clicks while no pageload/navigation is running (default false). */
+  enableUserInteractionTracing?: boolean;
+  /** `console.error` calls become error events (default false). */
+  captureConsoleErrors?: boolean;
+  /** Console calls become breadcrumbs (default true). */
+  consoleBreadcrumbs?: boolean;
+  /** `captureFeedback` also writes a capsule (default true in `qa` mode). */
+  captureCapsuleWithFeedback?: boolean;
+  /** Envelope outbox bounds (default 30 envelopes / 5 MiB / 7 days). */
+  envelopeOutboxLimits?: OutboxLimits;
 }
 
 /** What the runtime exposes to integrations. */
@@ -97,6 +152,8 @@ export interface BugCapsuleSession {
   reportError(error: unknown): void;
   /** `fetch` as it was before any integration wrapped it (for SDK traffic). */
   readonly nativeFetch: typeof fetch;
+  /** @internal Monitoring hooks (null when monitoring is off and during replay). */
+  readonly monitor?: MonitorHooks | null;
 }
 
 export interface ReplayContext {

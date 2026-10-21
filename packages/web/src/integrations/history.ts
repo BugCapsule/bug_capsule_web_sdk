@@ -14,6 +14,9 @@ export interface HistoryOptions {
  * opens the app at the launch checkpoint's location, and a periodic
  * checkpoint's location is restored with `history.replaceState` before the
  * app renders.
+ *
+ * Monitoring gets every change too (navigation breadcrumbs and
+ * transactions), recording or not.
  */
 export class HistoryIntegration implements BugCapsuleIntegration {
   readonly name = 'history';
@@ -79,7 +82,10 @@ export class HistoryIntegration implements BugCapsuleIntegration {
   private onChange(action: string): void {
     try {
       const loc = globalThis.location;
-      if (loc) this.route(`${loc.pathname}${loc.search}${loc.hash}`, 'history', action);
+      if (!loc) return;
+      const location = `${loc.pathname}${loc.search}${loc.hash}`;
+      this.session?.monitor?.navigation(location, 'history', action);
+      this.route(location, 'history', action);
     } catch {
       // never break navigation
     }

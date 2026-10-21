@@ -7,13 +7,15 @@
 export interface StoredCapsule {
   /** `<enqueuedAtMs>_<capsuleId>`: oldest first when sorted. */
   id: string;
+  /** The capsule id, or the envelope id in the `envelopes` store. */
   capsuleId: string;
   enqueuedAt: number;
   size: number;
   bytes: Uint8Array;
 }
 
-export type StoreName = 'outbox' | 'captures';
+/** `envelopes`: the monitoring outbox (monitoring-v1 §1), separate from capsules. */
+export type StoreName = 'outbox' | 'captures' | 'envelopes';
 
 export interface SdkStorage {
   readonly persistent: boolean;
@@ -38,7 +40,8 @@ interface Lease {
   until: number;
 }
 
-const VERSION = 1;
+/** 2 added the `envelopes` store. */
+const VERSION = 2;
 
 function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -141,7 +144,7 @@ class IdbStorage implements SdkStorage {
 /** Used when IndexedDB is unavailable: nothing survives a reload. */
 export class MemoryStorage implements SdkStorage {
   readonly persistent = false;
-  private readonly stores: Record<StoreName, Map<string, StoredCapsule>> = { outbox: new Map(), captures: new Map() };
+  private readonly stores: Record<StoreName, Map<string, StoredCapsule>> = { outbox: new Map(), captures: new Map(), envelopes: new Map() };
   private readonly kv = new Map<string, unknown>();
 
   async update<T>(
@@ -192,7 +195,7 @@ export async function openStorage(name: string, timeoutMs = 3000): Promise<SdkSt
       const req = indexedDB.open(name, VERSION);
       req.onupgradeneeded = () => {
         const db = req.result;
-        for (const store of ['outbox', 'captures']) {
+        for (const store of ['outbox', 'captures', 'envelopes']) {
           if (!db.objectStoreNames.contains(store)) db.createObjectStore(store, { keyPath: 'id' });
         }
         if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
