@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-packages/
+test-results/
+playwright-report/
+examples/shop/dist/
+.bugcapsule/
+*.tsbuildinfo
+.DS_Store

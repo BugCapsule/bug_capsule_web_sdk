@@ -1,0 +1,17 @@
+{
+  "runtime": "web",
+  "web": {
+    "url": "http://127.0.0.1:4317/",
+    "installCommand": "npm install && npm run build",
+    "installDir": "../..",
+    "buildCommand": "npm run build",
+    "serveCommand": "npm run preview",
+    "readyTimeoutSeconds": 60,
+    "env": {
+      "VITE_BUGCAPSULE_ALLOW_REPLAY": "true"
+    }
+  },
+  "timeouts": {
+    "buildSeconds": 600
+  }
+}

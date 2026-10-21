@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "tests": [
+    {
+      "capsuleId": "a83d0cb3-46e0-4253-b322-c0931137d5c0",
+      "name": "race: picks scored before profile",
+      "file": "bugcapsule/regressions/a83d0cb3-46e0-4253-b322-c0931137d5c0.bugcapsule",
+      "signature": "exception:TypeError:Cannot read properties of null (reading 'tier')",
+      "status": "active",
+      "addedAt": "2026-10-21T12:37:02.303867Z",
+      "runtime": "web",
+      "lineage": {
+        "serverId": "35f3c4ba-c7d2-4930-9d9b-fb9326f07acc",
+        "capturedGitSha": null
+      },
+      "lastRun": {
+        "at": "2026-10-21T12:37:30.356036Z",
+        "result": "pass",
+        "attempts": 2,
+        "validAttempts": 2,
+        "reproductions": 0,
+        "gitSha": null
+      }
+    }
+  ]
+}
