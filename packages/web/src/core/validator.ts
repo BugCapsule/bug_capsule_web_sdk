@@ -91,6 +91,8 @@ function oneOf(o: Obj, key: string, path: string, values: readonly string[]): st
   return v;
 }
 
+const SENTRY_EVENT_ID = /^[0-9a-f]{32}$/;
+
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})$/i;
 
 function isoDate(o: Obj, key: string, path: string): void {
@@ -247,6 +249,18 @@ function validate(root: unknown): void {
     stringMap(capabilities, `${mp}.capabilities`, CapsuleLimits.maxCapabilities, 100);
     for (const k of Object.keys(capabilities)) {
       if (k.length > 100) fail(`${mp}.capabilities`, 'keys must be at most 100 characters');
+    }
+  }
+
+  const links = optObject(m, 'links', mp);
+  if (links) {
+    const sentry = optObject(links, 'sentry', `${mp}.links`);
+    if (sentry) {
+      const sp = `${mp}.links.sentry`;
+      if (typeof sentry.eventId !== 'string' || !SENTRY_EVENT_ID.test(sentry.eventId)) {
+        fail(`${sp}.eventId`, 'must be 32 lowercase hex characters');
+      }
+      for (const k of ['projectId', 'orgId', 'release', 'environment']) optString(sentry, k, sp, 200);
     }
   }
 

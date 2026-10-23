@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { afterEach, describe, it } from 'node:test';
 import { gunzipSync } from 'node:zlib';
 import { Redactor } from '../../packages/web/src/core/redaction.js';
@@ -55,7 +56,7 @@ function setup(config: Partial<BugCapsuleConfig> = {}, options: Omit<Partial<Mon
     random: extra.random ?? (() => 0.5),
     log: () => {},
     sdk: { name: '@bugcapsule/web', version: '0.3.0' },
-    lockName: 'test:envelopes',
+    lockName: `test:envelopes:${randomUUID()}`, // each MemoryStorage is a separate database
     ...extra,
   } as MonitorDeps);
   monitors.push(monitor);

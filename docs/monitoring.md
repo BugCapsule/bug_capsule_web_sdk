@@ -21,6 +21,10 @@ turns it off (capsules unaffected); the backend can turn it off with
 `monitoringEnabled: false`, and its kill switch (`enabled: false`) stops
 everything. Nothing is sent during replay.
 
+Apps that use Sentry for monitoring can turn BugCapsule monitoring off and
+link capsules to Sentry events instead: see
+[Using BugCapsule with Sentry](../packages/web/README.md#using-bugcapsule-with-sentry).
+
 ## Setup
 
 ```ts
