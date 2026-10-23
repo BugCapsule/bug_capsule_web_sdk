@@ -116,6 +116,14 @@ backend can lower sampling and turn monitoring off remotely; `monitoring:
 false` turns it off locally. Symbolication: `npx @bugcapsule/cli sourcemaps
 inject dist` then `sourcemaps upload` in CI ([packages/cli](packages/cli)).
 
+### Alongside Sentry
+
+Apps that keep Sentry for errors add `sentryCompanion()` to `Sentry.init`
+and set `monitoring: false` in `BugCapsule.init`: each Sentry error event
+gets a `bugcapsule.capsule_id` tag and the capsule gets
+`manifest.links.sentry.eventId`. See
+[Using BugCapsule with Sentry](packages/web/README.md#using-bugcapsule-with-sentry).
+
 ## What is captured
 
 | Area | How | Replay |

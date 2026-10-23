@@ -52,6 +52,27 @@ export interface RuntimeInfo {
   frameworks?: string[];
 }
 
+/**
+ * `manifest.links.sentry`: the Sentry error event this capsule was captured
+ * for (written by the `sentryCompanion()` integration).
+ */
+export interface SentryLink {
+  /** Sentry `event_id`: 32 lowercase hex characters. */
+  eventId: string;
+  /** Project id from the DSN path (digits). */
+  projectId?: string;
+  /** Organization id from a DSN host `o<digits>.ingest…`, when present. */
+  orgId?: string;
+  release?: string | null;
+  environment?: string | null;
+}
+
+/** `manifest.links`: ids of records about this capsule in other tools. */
+export interface CapsuleLinks {
+  sentry?: SentryLink;
+  [k: string]: unknown;
+}
+
 export interface Manifest {
   capsuleId: string;
   createdAt: string;
@@ -77,6 +98,7 @@ export interface Manifest {
   redaction?: { extraKeys?: string[]; extraHeaders?: string[] };
   runtime?: RuntimeInfo;
   capabilities?: Record<string, string>;
+  links?: CapsuleLinks;
   [k: string]: unknown;
 }
 

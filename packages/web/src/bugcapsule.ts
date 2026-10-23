@@ -10,6 +10,11 @@ let rt: Runtime | null = null;
 let testOverrides: RuntimeOverrides | undefined;
 const fallbackRandom = Math.random;
 
+/** @internal The running runtime (integrations outside the BugCapsule lifecycle, e.g. the Sentry companion). */
+export function activeRuntime(): Runtime | null {
+  return rt;
+}
+
 export interface TrackOptions {
   /** Record the placeholder instead of the value (password inputs and `data-bugcapsule-sensitive` elements always are). */
   sensitive?: boolean;

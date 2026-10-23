@@ -19,6 +19,20 @@ export function sdkBundle(): string {
   return bundle;
 }
 
+let sentry: string | null = null;
+
+/** The SDK plus the real `@sentry/browser` (window.BC, window.BCCore, window.Sentry). */
+export function sentryBundle(): string {
+  sentry ??= buildSync({
+    entryPoints: [path.join(here, 'sentry-entry.ts')],
+    bundle: true,
+    write: false,
+    format: 'iife',
+    target: 'es2022',
+  }).outputFiles[0]!.text;
+  return sentry;
+}
+
 export const ORIGIN = 'http://shop.bc.test';
 export const BACKEND = 'http://backend.bc.test';
 export const API = 'http://api.bc.test';
