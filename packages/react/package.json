@@ -1,5 +1,6 @@
 {
   "name": "@bugcapsule/react",
+  "homepage": "https://bugcapsule.com",
   "version": "0.4.0-beta.1",
   "description": "React helpers for the BugCapsule web SDK: actions, tracked inputs, state, error boundary and a React Router integration.",
   "license": "SEE LICENSE IN LICENSE",
