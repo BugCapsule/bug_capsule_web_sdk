@@ -11,7 +11,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install chromium firefox webkit
-      - run: npm run typecheck && npm run build && npm test && npm run pack:all
+      # Build first: react, web-replay and cli type-check against the built @bugcapsule/web.
+      - run: npm run build && npm run typecheck && npm test && npm run pack:all
       - uses: actions/upload-artifact@v4
         with:
           name: npm-candidates
