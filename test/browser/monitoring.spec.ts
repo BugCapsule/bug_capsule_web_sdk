@@ -130,12 +130,20 @@ test('pageload and navigation transactions with http, resource spans, web vitals
   const ops = pageload.spans.map((s: any) => s.op);
   expect(ops).toContain('http.client');
   expect(ops).toContain('resource.script');
-  expect(ops).toContain('browser.request');
+  const timing = await page.evaluate(() => {
+    const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming;
+    return { request: nav?.requestStart > 0 && nav?.responseStart > 0,
+      ttfb: nav?.responseStart > 0,
+      cls: PerformanceObserver.supportedEntryTypes.includes('layout-shift') };
+  });
+  expect(ops.includes('browser.request')).toBe(timing.request);
   const http = pageload.spans.find((s: any) => s.op === 'http.client' && s.description === `GET ${ORIGIN}/api/cart`);
   expect(http.data['http.response.status_code']).toBe(200);
   expect(sameOriginHeaders[0]!.traceparent.split('-')[2]).toBe(http.spanId);
-  expect(pageload.measurements.ttfb.unit).toBe('millisecond');
-  expect(pageload.measurements.cls).toEqual({ value: expect.any(Number), unit: 'none' });
+  if (timing.ttfb) expect(pageload.measurements.ttfb.unit).toBe('millisecond');
+  else expect(pageload.measurements?.ttfb).toBeUndefined();
+  if (timing.cls) expect(pageload.measurements.cls).toEqual({ value: expect.any(Number), unit: 'none' });
+  else expect(pageload.measurements?.cls).toBeUndefined();
 
   await page.evaluate(() => history.pushState({}, '', '/product/42?ref=mail'));
   await page.evaluate(() => (window as any).__fetchCart());

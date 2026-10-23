@@ -86,6 +86,7 @@ type PerformanceLike = Pick<Performance, 'getEntriesByType'>;
 export class WebVitals {
   private lcp: number | null = null;
   private lcpFinal = false;
+  private observesLayoutShift = false;
   readonly cls = new ClsAccumulator();
   readonly inp = new InpAccumulator();
   private observers: PerformanceObserver[] = [];
@@ -106,6 +107,7 @@ export class WebVitals {
         const o = new PerformanceObserver((list) => cb(list.getEntries()));
         o.observe({ type, buffered: true, ...extra } as PerformanceObserverInit);
         this.observers.push(o);
+        if (type === 'layout-shift') this.observesLayoutShift = true;
       } catch {
         // unsupported in this browser
       }
@@ -148,7 +150,7 @@ export class WebVitals {
     const fcp = this.perf?.getEntriesByType?.('paint').find((e) => e.name === 'first-contentful-paint');
     if (fcp) out.fcp = Math.max(0, fcp.startTime - activation);
     if (this.lcp !== null) out.lcp = this.lcp;
-    if (this.cls.value > 0 || this.observers.length > 0) out.cls = Math.round(this.cls.value * 10_000) / 10_000;
+    if (this.cls.value > 0 || this.observesLayoutShift) out.cls = Math.round(this.cls.value * 10_000) / 10_000;
     const inp = this.inp.value;
     if (inp !== null) out.inp = inp;
     return out;

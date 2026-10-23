@@ -7,5 +7,9 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   reporter: [['list']],
-  use: { browserName: 'chromium', headless: true },
+  use: { headless: true },
+  projects: ['chromium', 'firefox', 'webkit'].map((browserName) => ({
+    name: browserName,
+    use: { browserName: browserName as 'chromium' | 'firefox' | 'webkit' },
+  })),
 });
