@@ -74,7 +74,7 @@ test('captures a failure with redacted network, input and pointer events, then u
   expect(validateCapsuleDocument(doc)).toBeNull();
   const m = doc.manifest;
   expect(m.runtime).toMatchObject({ name: 'web', language: 'javascript' });
-  expect(m.sdk).toEqual({ name: '@bugcapsule/web', version: '0.3.0' });
+  expect(m.sdk).toEqual({ name: '@bugcapsule/web', version: '0.4.0-beta.1' });
   expect(m.capabilities['network.fetch']).toBe('supported');
   expect(m.capabilities['lifecycle.replay']).toBe('partial');
   const messages = {

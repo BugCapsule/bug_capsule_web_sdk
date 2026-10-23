@@ -1,6 +1,6 @@
 {
   "name": "@bugcapsule/react",
-  "version": "0.3.0",
+  "version": "0.4.0-beta.1",
   "description": "React helpers for the BugCapsule web SDK: actions, tracked inputs, state, error boundary and a React Router integration.",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -27,7 +27,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "peerDependencies": {
-    "@bugcapsule/web": "0.3.0",
+    "@bugcapsule/web": "0.4.0-beta.1",
     "react": ">=18",
     "react-router": ">=6.4"
   },
@@ -37,14 +37,14 @@
     }
   },
   "devDependencies": {
-    "@bugcapsule/web": "0.3.0",
+    "@bugcapsule/web": "0.4.0-beta.1",
     "@types/react": "^19.2.0",
     "react": "19.2.9",
     "react-router": "7.18.4"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/draz26648/bug_capsule_web_sdk",
+    "url": "https://github.com/BugCapsule/bug_capsule_web_sdk",
     "directory": "packages/react"
   }
 }

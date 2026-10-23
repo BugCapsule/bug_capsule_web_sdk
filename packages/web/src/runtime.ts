@@ -19,7 +19,7 @@ import { saveCapture, UploadOutbox } from './storage/outbox.js';
 import type { BugCapsuleConfig, BugCapsuleIntegration, BugCapsuleSession, CaptureResult, ReplayContext, UploadResult } from './types.js';
 
 export const SDK_NAME = '@bugcapsule/web';
-export const SDK_VERSION = '0.3.0';
+export const SDK_VERSION = '0.4.0-beta.1';
 
 /**
  * What happened to a failure's capsule (the Sentry companion reports it as
