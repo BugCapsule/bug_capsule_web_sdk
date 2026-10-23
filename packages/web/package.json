@@ -2,7 +2,7 @@
   "name": "@bugcapsule/web",
   "version": "0.3.0",
   "description": "BugCapsule web SDK: capture failures in the browser as portable .bugcapsule capsules and replay them against the real app with the bugcapsule CLI.",
-  "license": "Apache-2.0",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",

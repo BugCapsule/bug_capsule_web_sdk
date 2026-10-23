@@ -2,7 +2,7 @@
   "name": "@bugcapsule/web-replay",
   "version": "0.3.0",
   "description": "Playwright runner that replays BugCapsule web capsules against the real app for the bugcapsule CLI.",
-  "license": "Apache-2.0",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -2,7 +2,7 @@
   "name": "@bugcapsule/react",
   "version": "0.3.0",
   "description": "React helpers for the BugCapsule web SDK: actions, tracked inputs, state, error boundary and a React Router integration.",
-  "license": "Apache-2.0",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",

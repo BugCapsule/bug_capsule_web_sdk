@@ -2,7 +2,7 @@
   "name": "@bugcapsule/cli",
   "version": "0.3.0",
   "description": "BugCapsule build tooling for the web: inject debug ids into bundles and source maps, upload source maps for symbolication.",
-  "license": "Apache-2.0",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
