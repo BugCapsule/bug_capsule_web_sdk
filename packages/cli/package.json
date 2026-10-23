@@ -1,5 +1,6 @@
 {
   "name": "@bugcapsule/cli",
+  "homepage": "https://bugcapsule.com",
   "version": "0.4.0-beta.1",
   "description": "BugCapsule build tooling for the web: inject debug ids into bundles and source maps, upload source maps for symbolication.",
   "license": "SEE LICENSE IN LICENSE",
