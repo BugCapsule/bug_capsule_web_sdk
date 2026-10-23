@@ -112,7 +112,7 @@ test('an unhandled error becomes an event linked to its capsule, with frames, de
   const withEvent = backend.envelopes.find((e) => e.body.items.some((i: any) => i.type === 'event'))!;
   expect(withEvent.headers['content-encoding']).toBe('gzip');
   expect(withEvent.headers.authorization).toBe(`Bearer ${INGEST}`);
-  expect(withEvent.body.sdk).toEqual({ name: '@bugcapsule/web', version: '0.3.0' });
+  expect(withEvent.body.sdk).toEqual({ name: '@bugcapsule/web', version: '0.4.0-beta.1' });
 });
 
 test('pageload and navigation transactions with http, resource spans, web vitals; traceparent only to same-origin targets', async ({ page }) => {
