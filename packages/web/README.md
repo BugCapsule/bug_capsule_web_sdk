@@ -27,7 +27,7 @@ See the [repository README](../../README.md) for the quickstart and details.
 
 If the app already uses Sentry for errors, keep it: Sentry stays the error
 and issue tool, and BugCapsule captures the replayable capsule for the same
-failure. The `sentryCompanion()` integration (in `@bugcapsule/web` 0.3.0)
+failure. The `sentryCompanion()` integration (in source; not in the published 0.3.0 tarballs)
 records each side's id on the other, so one Sentry event maps to one capsule
 by id (never by message or time):
 
@@ -46,7 +46,11 @@ the Sentry JavaScript SDK v8 and later (`processEvent`); it was tested with
 ### Install and set up
 
 ```bash
-npm install @bugcapsule/web @sentry/browser
+# Until the next release, build the SDK from this repository.
+npm install && npm run build
+npm pack -w @bugcapsule/web
+# In your application, install the resulting tarball and Sentry:
+npm install /path/to/bugcapsule-web-0.3.0.tgz @sentry/browser
 ```
 
 ```ts
