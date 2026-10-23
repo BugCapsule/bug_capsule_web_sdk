@@ -104,7 +104,14 @@ describe('UploadOutbox', () => {
     assert.deepEqual(await outbox.entries(), []);
   });
 
-  it('a second flusher holding the lease makes a flush a no-op', async () => {
+  it('a second flusher holding the lease makes a flush a no-op', async (t) => {
+    // Exercise the IndexedDB lease fallback even on Node versions with Web Locks.
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: undefined });
+    t.after(() => {
+      if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor);
+      else Reflect.deleteProperty(globalThis, 'navigator');
+    });
     const storage = new MemoryStorage();
     const a = new UploadOutbox(storage, {}, 'shared', () => 0);
     await a.enqueue('a', gz());
