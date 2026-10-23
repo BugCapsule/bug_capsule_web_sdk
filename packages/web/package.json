@@ -2,7 +2,7 @@
   "name": "@bugcapsule/web",
   "version": "0.3.0",
   "description": "BugCapsule web SDK: capture failures in the browser as portable .bugcapsule capsules and replay them against the real app with the bugcapsule CLI.",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "type": "module",
   "sideEffects": false,
   "main": "./dist/index.js",
@@ -19,11 +19,24 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "repository": { "type": "git", "url": "https://github.com/draz26648/bug_capsule_web_sdk", "directory": "packages/web" },
-  "keywords": ["bugcapsule", "replay", "debugging", "qa", "regression"]
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/draz26648/bug_capsule_web_sdk",
+    "directory": "packages/web"
+  },
+  "keywords": [
+    "bugcapsule",
+    "replay",
+    "debugging",
+    "qa",
+    "regression"
+  ]
 }

@@ -40,7 +40,7 @@ test.beforeEach(async ({ page }) => {
   await setUpRoutes(page, backend);
 });
 
-test('captures a failure with redacted network, input and pointer events, then uploads it', async ({ page }) => {
+test('captures a failure with redacted network, input and pointer events, then uploads it', async ({ page, browserName }) => {
   await page.goto(`${ORIGIN}/cart?coupon=SAVE10&token=t0p`);
   await page.evaluate(() => {
     localStorage.setItem('shop.cart', '[1]');
@@ -77,7 +77,12 @@ test('captures a failure with redacted network, input and pointer events, then u
   expect(m.sdk).toEqual({ name: '@bugcapsule/web', version: '0.3.0' });
   expect(m.capabilities['network.fetch']).toBe('supported');
   expect(m.capabilities['lifecycle.replay']).toBe('partial');
-  expect(m.failure.signature).toBe("exception:TypeError:Cannot read properties of null (reading 'amount')");
+  const messages = {
+    chromium: "Cannot read properties of null (reading 'amount')",
+    firefox: 'can\'t access property "amount", cart.items[#].price is null',
+    webkit: "null is not an object (evaluating 'cart.items[#].price.amount')",
+  };
+  expect(m.failure.signature).toBe(`exception:TypeError:${messages[browserName]}`);
   // The redacted storage key is a known gap: replay restores a placeholder.
   expect(m.eligibility.status).toBe('partial');
   expect(m.eligibility.missing.map((x: { dependency: string }) => x.dependency)).toEqual(['storage.shop.authToken']);

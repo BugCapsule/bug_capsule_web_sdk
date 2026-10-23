@@ -1,0 +1,18 @@
+name: Release gates
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  validate:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install chromium firefox webkit
+      - run: npm run typecheck && npm run build && npm test && npm run pack:all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-candidates
+          path: dist-packages/*.tgz

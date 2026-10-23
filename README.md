@@ -272,3 +272,9 @@ tests fail when they differ.
    clean project and type-check (as done for 0.3.0).
 4. Publish from a clean checkout (`npm publish -w … --access public`) only
    after review; record the git SHA of the release.
+
+## Release validation (2026-10-23)
+
+This repository is licensed under Apache-2.0 (see LICENSE). Local candidates are
+prepared without publishing. See `docs/release-readiness.md` for the current
+validation evidence and remaining release gates.
