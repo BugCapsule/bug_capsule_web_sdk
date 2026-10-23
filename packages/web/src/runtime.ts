@@ -2,7 +2,7 @@ import { ActionRegistry } from './actions.js';
 import { capsuleFromJson, capsuleToJson, CapsuleFormatError, encodeCapsule } from './core/codec.js';
 import { cut } from './core/json.js';
 import { assertionFailure, exceptionFailure, shiftFailure } from './core/failure.js';
-import { EligibilityBuilder, runtimeOf, type Capsule, type CapsuleEvent, type Checkpoint, type CheckpointKind, type FailureRecord } from './core/model.js';
+import { EligibilityBuilder, runtimeOf, type Capsule, type CapsuleEvent, type Checkpoint, type CheckpointKind, type FailureRecord, type SentryLink } from './core/model.js';
 import { replaySettingsFromJson, type ReplayReport, type ReplaySettings } from './core/protocol.js';
 import { FlightRecorder } from './core/recorder.js';
 import { Redactor } from './core/redaction.js';
@@ -20,6 +20,56 @@ import type { BugCapsuleConfig, BugCapsuleIntegration, BugCapsuleSession, Captur
 
 export const SDK_NAME = '@bugcapsule/web';
 export const SDK_VERSION = '0.3.0';
+
+/**
+ * What happened to a failure's capsule (the Sentry companion reports it as
+ * the `bugcapsule.capture` tag):
+ * `scheduled` a capsule was scheduled for it; `not_recording` this session
+ * does not record (capture setup failed or timed out, or `init` has not
+ * finished); `sampled_out` a production session not selected by
+ * `productionSampleRate` / the backend's `sampleRate`; `limit`
+ * `maxCapsulesPerSession` reached; `duplicate` the same failure (signature
+ * or thrown value) already had its chance this session; `replaying` the
+ * app runs under the replay runner; `disabled` BugCapsule is not
+ * initialized, `enabled: false`, the backend kill switch, or
+ * `autoCaptureOnFailure: false`; `not_a_failure` `ignoreError` returned true,
+ * or the event carries no exception.
+ */
+export type CaptureDecision = 'scheduled' | 'not_recording' | 'sampled_out' | 'limit' | 'duplicate' | 'replaying' | 'disabled' | 'not_a_failure';
+
+export interface FailureOutcome {
+  /** The capsule scheduled for this failure, if any. */
+  readonly capsuleId: string | null;
+  readonly capture: CaptureDecision;
+}
+
+/** @internal What the Sentry companion passes for one Sentry error event. */
+export interface ExternalFailure {
+  /** `hint.originalException`. */
+  error: unknown;
+  /** The hint has an `originalException` key (its value may be a thrown `undefined`). */
+  hasError: boolean;
+  /** The event carries `exception.values`. */
+  hasException: boolean;
+  /** Last exception type/value, used without `originalException`. */
+  fallback: { type?: string; value?: string } | null;
+  /** Written to `manifest.links.sentry` of the capsule; null when the event id is unusable. */
+  link: SentryLink | null;
+}
+
+/** One thrown value the runtime handled (either path). */
+interface HandledFailure {
+  failure: FailureRecord | null;
+  capsuleId: string | null;
+  capture: CaptureDecision;
+  /** A BugCapsule monitoring event was sent for it. */
+  monitored: boolean;
+  /** A Sentry event was linked to its capsule. */
+  sentryLinked: boolean;
+}
+
+/** How long a primitive thrown value (keyed by signature) counts as the same failure. */
+const PRIMITIVE_WINDOW_MS = 5000;
 
 /** Replaces storage, transport and randomness in tests. */
 export interface RuntimeOverrides {
@@ -86,6 +136,8 @@ export class Runtime implements BugCapsuleSession {
   engine: ReplayEngine | null = null;
   private currentRedactor: Redactor;
   private recording = false;
+  /** Why `recording` is false. */
+  private notRecording: 'not_recording' | 'sampled_out' | 'disabled' = 'not_recording';
   private captureBodies: boolean;
   private maxCapsuleBytes = 5 * 1024 * 1024;
   private sessionRate = 1;
@@ -116,6 +168,14 @@ export class Runtime implements BugCapsuleSession {
   private readonly capsuleLinks = new Map<string, MonitoringLink>();
   /** The latest event sent for each failure signature (manual captures link to it). */
   private readonly failureLinks = new Map<string, MonitoringLink>();
+  /** `manifest.links.sentry` for capsules about to be written, by capsule id. */
+  private readonly sentryLinks = new Map<string, SentryLink>();
+  /** Capsule ids writeCapsule already ran for (a late Sentry link cannot reach them). */
+  private readonly writtenCapsules = new Set<string>();
+  /** Thrown objects already handled, so one error is one failure whichever handler runs first. */
+  private readonly handledErrors = new WeakMap<object, HandledFailure>();
+  /** Primitive (or synthesized) thrown values, by failure signature, for a short window. */
+  private readonly handledValues = new Map<string, { entry: HandledFailure; at: number }>();
 
   constructor(
     readonly config: Readonly<BugCapsuleConfig>,
@@ -126,6 +186,7 @@ export class Runtime implements BugCapsuleSession {
     this.integrations = [...(config.integrations ?? []), this.state];
     this.currentRedactor = this.baseRedactor();
     this.captureBodies = config.captureNetworkBodies ?? true;
+    if (config.enabled === false) this.notRecording = 'disabled';
   }
 
   // ------------------------------------------------------------ session API
@@ -233,7 +294,7 @@ export class Runtime implements BugCapsuleSession {
       await withTimeout(this.prepareCapture(), this.config.setupTimeoutMs ?? 5000);
     } catch (e) {
       this.warnOnce(`capture setup failed; the app runs without capture: ${String(e)}`);
-      this.stopRecording();
+      this.stopRecording('not_recording');
     }
     this.scheduleAnchor();
     this.afterStarted();
@@ -409,11 +470,15 @@ export class Runtime implements BugCapsuleSession {
   }
 
   private decideRecording(remote: RemoteCaptureConfig | null): boolean {
-    if (this.config.enabled === false) return false;
-    if (remote && !remote.enabled) return false;
+    if (this.config.enabled === false || (remote && !remote.enabled)) {
+      this.notRecording = 'disabled';
+      return false;
+    }
     if (this.mode !== 'production') return true;
     this.sessionRate = this.effectiveRate(remote);
-    return this.sampleRandom() < this.sessionRate;
+    const sampled = this.sampleRandom() < this.sessionRate;
+    if (!sampled) this.notRecording = 'sampled_out';
+    return sampled;
   }
 
   private installCapture(): void {
@@ -424,7 +489,11 @@ export class Runtime implements BugCapsuleSession {
   private installErrorHandlers(): void {
     if (typeof addEventListener !== 'function') return;
     const onError = (e: ErrorEvent) =>
-      this.guard(() => this.onError(e.error ?? new ErrorLike(e.message || 'Script error.'), { type: 'onerror', handled: false }));
+      this.guard(() =>
+        e.error !== undefined && e.error !== null
+          ? this.onError(e.error, { type: 'onerror', handled: false })
+          : this.onError(new ErrorLike(e.message || 'Script error.'), { type: 'onerror', handled: false }, {}, true),
+      );
     const onRejection = (e: PromiseRejectionEvent) => this.guard(() => this.onError(e.reason, { type: 'unhandledrejection', handled: false }));
     addEventListener('error', onError);
     addEventListener('unhandledrejection', onRejection);
@@ -566,15 +635,89 @@ export class Runtime implements BugCapsuleSession {
    * A failure: recorded (and maybe captured) for capsules, and sent as an
    * error event; when a capsule is written for it, the event carries its
    * `capsuleId` and the capsule `manifest.monitoring` (monitoring-v1 §4.3).
+   * A thrown value seen before (this path or the Sentry companion) is not
+   * recorded again. `synthetic`: `error` was made up from an ErrorEvent
+   * without `error`, so it is matched by signature.
    */
-  private onError(error: unknown, mechanism: Mechanism = { type: 'manual', handled: true }, context: CaptureContext = {}): void {
+  private onError(error: unknown, mechanism: Mechanism = { type: 'manual', handled: true }, context: CaptureContext = {}, synthetic = false): void {
+    const prior = this.handledFor(error, synthetic);
+    if (prior) {
+      this.monitorFailure(prior, error, mechanism, context);
+      return;
+    }
     if (this.config.ignoreError?.(error)) return;
-    const failure = exceptionFailure(error, this.now(), (s) => this.currentRedactor.scrubText(s));
-    const capsuleId = this.handleFailure(failure);
+    const failure = this.failureOf(error);
+    const entry = this.remember(error, synthetic, failure, this.decideFailure(failure));
+    this.monitorFailure(entry, error, mechanism, context);
+  }
+
+  private failureOf(error: unknown): FailureRecord {
+    return exceptionFailure(error, this.now(), (s) => this.currentRedactor.scrubText(s));
+  }
+
+  private monitorFailure(entry: HandledFailure, error: unknown, mechanism: Mechanism, context: CaptureContext): void {
     const monitor = this.monitorClient;
-    if (!monitor || this.engine) return;
-    const eventId = monitor.captureError(error, { ...context, mechanism }, { capsuleId });
-    this.linkFailure(failure, capsuleId, eventId);
+    if (!monitor || this.engine || entry.monitored || !entry.failure) return;
+    entry.monitored = true;
+    const eventId = monitor.captureError(error, { ...context, mechanism }, { capsuleId: entry.capsuleId });
+    this.linkFailure(entry.failure, entry.capsuleId, eventId);
+  }
+
+  private isObjectKey(error: unknown, synthetic: boolean): error is object {
+    return !synthetic && (typeof error === 'object' || typeof error === 'function') && error !== null;
+  }
+
+  private handledFor(error: unknown, synthetic: boolean, signature?: string): HandledFailure | undefined {
+    if (this.isObjectKey(error, synthetic)) return this.handledErrors.get(error);
+    const key = signature ?? this.failureOf(error).signature;
+    const hit = this.handledValues.get(key);
+    if (!hit) return undefined;
+    if (Date.now() - hit.at > PRIMITIVE_WINDOW_MS) {
+      this.handledValues.delete(key);
+      return undefined;
+    }
+    return hit.entry;
+  }
+
+  private remember(error: unknown, synthetic: boolean, failure: FailureRecord | null, outcome: FailureOutcome, signature?: string): HandledFailure {
+    const entry: HandledFailure = { failure, capsuleId: outcome.capsuleId, capture: outcome.capture, monitored: false, sentryLinked: false };
+    if (this.isObjectKey(error, synthetic)) {
+      this.handledErrors.set(error, entry);
+    } else {
+      const key = signature ?? failure?.signature ?? this.failureOf(error).signature;
+      if (this.handledValues.size >= 50) this.handledValues.delete(this.handledValues.keys().next().value!);
+      this.handledValues.set(key, { entry, at: Date.now() });
+    }
+    return entry;
+  }
+
+  /**
+   * @internal Sentry companion: the outcome for the failure behind a Sentry
+   * error event. A failure BugCapsule has not seen is handled here like
+   * `reportError` but without a BugCapsule monitoring event. `link` goes to
+   * the capsule's `manifest.links.sentry` (one Sentry event per capsule).
+   */
+  sentryEvent(input: ExternalFailure): FailureOutcome {
+    if (!input.hasException) return { capsuleId: null, capture: this.engine ? 'replaying' : 'not_a_failure' };
+    const fromValue = input.hasError;
+    const synthetic = !fromValue;
+    const failure = fromValue
+      ? this.failureOf(input.error)
+      : this.failureOf(new ErrorLike(input.fallback?.value ?? '', input.fallback?.type));
+    let entry = this.handledFor(input.error, synthetic, failure.signature);
+    if (!entry) {
+      if (this.config.ignoreError?.(input.error)) {
+        entry = this.remember(input.error, synthetic, null, { capsuleId: null, capture: 'not_a_failure' }, failure.signature);
+      } else {
+        entry = this.remember(input.error, synthetic, failure, this.decideFailure(failure), failure.signature);
+      }
+    }
+    if (this.engine) return { capsuleId: null, capture: 'replaying' };
+    if (!entry.capsuleId) return { capsuleId: null, capture: entry.capture };
+    if (entry.sentryLinked) return { capsuleId: null, capture: 'duplicate' };
+    entry.sentryLinked = true;
+    if (input.link && !this.writtenCapsules.has(entry.capsuleId)) this.sentryLinks.set(entry.capsuleId, input.link);
+    return { capsuleId: entry.capsuleId, capture: 'scheduled' };
   }
 
   fail(assertionId: string, message = ''): void {
@@ -594,19 +737,23 @@ export class Runtime implements BugCapsuleSession {
 
   /** Returns the id of the capsule it scheduled for this failure, if any. */
   handleFailure(failure: FailureRecord): string | null {
+    return this.decideFailure(failure).capsuleId;
+  }
+
+  private decideFailure(failure: FailureRecord): FailureOutcome {
     if (this.engine) {
       this.engine.onFailure(failure);
-      return null;
+      return { capsuleId: null, capture: 'replaying' };
     }
-    if (!this.recording) return null;
+    if (!this.recording) return { capsuleId: null, capture: this.notRecording };
     const { stack: _stack, ...withoutStack } = failure;
     this.record('failure', withoutStack as unknown as Record<string, unknown>);
     this.lastFailure = failure;
-    if (this.seenSignatures.has(failure.signature)) return null;
+    if (this.seenSignatures.has(failure.signature)) return { capsuleId: null, capture: 'duplicate' };
     this.seenSignatures.add(failure.signature);
-    if (this.config.autoCaptureOnFailure === false) return null;
-    if (this.capsulesWritten >= (this.config.maxCapsulesPerSession ?? 3)) return null;
-    if (this.capturedSignatures.has(failure.signature)) return null;
+    if (this.config.autoCaptureOnFailure === false) return { capsuleId: null, capture: 'disabled' };
+    if (this.capsulesWritten >= (this.config.maxCapsulesPerSession ?? 3)) return { capsuleId: null, capture: 'limit' };
+    if (this.capturedSignatures.has(failure.signature)) return { capsuleId: null, capture: 'duplicate' };
     this.capturedSignatures.add(failure.signature);
     const capsuleId = uuidV4();
     // Let the failure settle (follow-up events) before writing.
@@ -616,7 +763,7 @@ export class Runtime implements BugCapsuleSession {
         (e) => this.warnOnce(`capture failed: ${String(e)}`),
       );
     }, 300);
-    return capsuleId;
+    return { capsuleId, capture: 'scheduled' };
   }
 
   // ---------------------------------------------------------------- capsule
@@ -624,7 +771,10 @@ export class Runtime implements BugCapsuleSession {
   async writeCapsule(failure: FailureRecord | null, labels: Record<string, string> = {}, capsuleId: string = uuidV4()): Promise<CaptureResult | null> {
     const recorder = this.recorder;
     const link = this.capsuleLinks.get(capsuleId) ?? (failure ? this.failureLinks.get(failure.signature) : undefined);
+    const sentry = this.sentryLinks.get(capsuleId);
     this.capsuleLinks.delete(capsuleId);
+    this.sentryLinks.delete(capsuleId);
+    this.writtenCapsules.add(capsuleId);
     if (!this.recording || !recorder) return null;
     this.capsulesWritten++;
     const window = recorder.window();
@@ -708,6 +858,7 @@ export class Runtime implements BugCapsuleSession {
         runtime: { name: 'web', version: cut(browserVersion(), 200), language: 'javascript', ...(this.frameworks.size ? { frameworks: [...this.frameworks] } : {}) },
         capabilities,
         ...(link ? { monitoring: { ...link } } : {}),
+        ...(sentry ? { links: { sentry: { ...sentry } } } : {}),
       },
       checkpoint: { ...window.checkpoint, t: window.checkpoint.t - anchor },
       events,
@@ -801,7 +952,7 @@ export class Runtime implements BugCapsuleSession {
       if (rate < this.sessionRate) {
         const keep = this.sessionRate <= 0 ? 0 : rate / this.sessionRate;
         this.sessionRate = rate;
-        if (this.sampleRandom() >= keep) this.stopRecording();
+        if (this.sampleRandom() >= keep) this.stopRecording('sampled_out');
       }
     }
     const bodies = (this.config.captureNetworkBodies ?? true) && next.captureNetworkBodies;
@@ -821,14 +972,15 @@ export class Runtime implements BugCapsuleSession {
           checkpoint: (c) => ({ ...c, data: this.currentRedactor.redactJson(c.data) }),
         });
       } catch {
-        this.stopRecording();
+        this.stopRecording('not_recording');
       }
     }
   }
 
-  private stopRecording(): void {
+  private stopRecording(reason: 'not_recording' | 'sampled_out' | 'disabled'): void {
     this.captureEpoch++;
     this.recording = false;
+    this.notRecording = reason;
     this.recorder = null;
     if (this.checkpointTimer) clearInterval(this.checkpointTimer);
     this.checkpointTimer = null;
@@ -837,7 +989,7 @@ export class Runtime implements BugCapsuleSession {
   /** Kill switch: stop, drop the buffer, delete queued and saved captures. */
   private disableCapture(): void {
     this.killed = true;
-    this.stopRecording();
+    this.stopRecording('disabled');
     void this.outbox?.purge().catch(() => 0);
     void this.storage()
       .then((s) => s.update('captures', (records) => ({ remove: records.map((r) => r.id), result: undefined })))
@@ -951,7 +1103,7 @@ export class Runtime implements BugCapsuleSession {
 
   async dispose(): Promise<void> {
     this.disposed = true;
-    this.stopRecording();
+    this.stopRecording('disabled');
     this.remote?.dispose();
     this.monitorClient?.dispose();
     for (const c of this.cleanups.reverse()) c();
@@ -961,7 +1113,11 @@ export class Runtime implements BugCapsuleSession {
 }
 
 class ErrorLike extends Error {
-  override name = 'Error';
+  override name: string;
+  constructor(message: string, name?: string) {
+    super(message);
+    this.name = name || 'Error';
+  }
 }
 
 function withoutBodies(data: Record<string, unknown>): Record<string, unknown> {
