@@ -31,16 +31,58 @@ npm install @bugcapsule/web @bugcapsule/react
 npm install -D @bugcapsule/web-replay   # only where you run `bugcapsule run|verify`
 ```
 
+Generate an SDK token in the BugCapsule dashboard (Project settings → Keys →
+SDK tokens), then:
+
 ```ts
 // main.ts: the first thing the app does
+import { BugCapsule } from '@bugcapsule/web';
+
+await BugCapsule.init({ token: 'bcsdk.v1.…' });
+renderApp();
+```
+
+That is a complete connection. The token carries your BugCapsule address
+and an ingest-only credential: it can send Capsules and events and read
+capture settings, nothing else, so it is safe in a web bundle. Hosted and
+self-hosted BugCapsule work the same way; the token knows where to go.
+`appVersion` defaults to the version part of `release`, else `unknown`.
+
+Check the connection from the app:
+
+```ts
+console.log(BugCapsule.status());
+// connection.state: 'connected' once the configuration was fetched;
+// connection.firstEventAcceptedAt / firstCapsuleAcceptedAt once data arrived;
+// instrumentation.missing: the replay adapters not set up yet
+```
+
+| `connection.state` | Meaning |
+|---|---|
+| `connecting` | No configuration fetched yet in this page session |
+| `connected` | Configuration fetched: address, token and network work |
+| `offline` | BugCapsule can't be reached; data stays in the outbox and is retried |
+| `rejected` | The token was refused: `reason` is `token_revoked`, `token_expired` or `token_unknown`, `message` says what to do. Capture and uploads stop for the page session |
+| `invalid_token` / `unsupported_token_version` | The token can't be read (damaged, a key pasted instead, or made for a newer SDK). One `[bugcapsule]` line in the console says why; the app runs without BugCapsule |
+| `disabled` | `enabled: false`, or capture switched off for the project |
+
+A wrong, revoked or unreachable token never throws from `init` and never
+delays your app's start.
+
+### Complete capture and replay (progressive)
+
+The token connects. Faithful replay also needs the app's network, navigation
+and state, which you add as you go:
+
+```ts
 import { BugCapsule, networkIntegration, historyIntegration, localStorageIntegration } from '@bugcapsule/web';
 
 await BugCapsule.init({
+  token: 'bcsdk.v1.…',
   appVersion: '1.4.0',
   appBuild: '52',
   mode: 'qa',                                   // 'debug' | 'qa' | 'production' (sampled)
   gitSha: import.meta.env.VITE_BUGCAPSULE_GIT_SHA,
-  backend: { url: 'https://bugcapsule.example.com', ingestKey: 'bci_…' }, // never a bcs_ secret key
   integrations: [
     networkIntegration({ rules: [{ method: 'POST', path: '/api/checkout', ignoreBodyFields: ['timestamp', 'nonce'] }] }),
     historyIntegration(),
@@ -51,6 +93,10 @@ await BugCapsule.init({
 
 renderApp();
 ```
+
+**Explicit backend (setups from before tokens).** `backend: { url:
+'https://bugcapsule.example.com', ingestKey: 'bci_…' }` still works and wins
+over `token`. Never put a `bcs_` secret key in an app.
 
 Await `init` before rendering: in replay it restores storage and state
 there. Call it before any code keeps its own reference to `fetch`.

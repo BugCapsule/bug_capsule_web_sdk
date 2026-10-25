@@ -4,13 +4,16 @@
  * `bugcapsule` CLI (Playwright runner: `@bugcapsule/web-replay`).
  */
 export { BugCapsule, type TrackOptions } from './bugcapsule.js';
+export { parseConnectionToken, type ConnectionTokenError, type ParsedConnectionToken } from './connection-token.js';
 export type { CapsuleLinks, SentryLink } from './core/model.js';
 export type {
   BugCapsuleBackendConfig,
   BugCapsuleConfig,
   BugCapsuleIntegration,
   BugCapsuleSession,
+  BugCapsuleStatus,
   CaptureResult,
+  ConnectionState,
   OutboxLimits,
   ReplayContext,
   UploadResult,
