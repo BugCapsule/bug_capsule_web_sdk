@@ -1,33 +1,52 @@
 # @bugcapsule/web
 
-Framework-independent BugCapsule SDK for the browser, with TypeScript types.
-Captures failures as portable `.bugcapsule` capsules (fetch/XHR, pointer,
-actions, tracked inputs, navigation, errors, assertions, allowlisted storage,
-registered state), queues them in IndexedDB and uploads them to the BugCapsule
-backend; replays them against the real app with the `bugcapsule` CLI. Also
-sends monitoring envelopes (error events, release-health sessions,
-transactions and spans with web vitals, user feedback; see
-[docs/monitoring.md](../../docs/monitoring.md)).
+The BugCapsule SDK for the browser. It records what led up to a bug as a
+portable `.bugcapsule` file you can replay against your real app, verify a fix
+against, and keep as a regression test. It also reports errors, release
+health, performance traces and user feedback. No framework, no dependencies,
+TypeScript types included.
 
-Entry points:
+```bash
+npm install @bugcapsule/web
+```
 
-* `@bugcapsule/web`: `BugCapsule` (capsules, plus `captureException`,
+```ts
+import { BugCapsule } from '@bugcapsule/web';
+
+await BugCapsule.init({ token: 'bcsdk.v1.…' });   // SDK token from the BugCapsule dashboard
+renderApp();
+```
+
+> SDK tokens arrive in the release after `0.4.0-beta.1`. On `0.4.0-beta.1`,
+> pass `backend: { url: 'https://api.bugcapsule.com', ingestKey: 'bci_…' }`
+> instead of `token`.
+
+**Get started:** [Web SDK guide](https://docs.bugcapsule.com/web.html) ·
+[README with the full setup](https://github.com/BugCapsule/bug_capsule_web_sdk#readme) ·
+[Monitoring options](https://github.com/BugCapsule/bug_capsule_web_sdk/blob/main/docs/monitoring.md)
+
+## Entry points
+
+- `@bugcapsule/web`: `BugCapsule` (capture, `status()`, `captureException`,
   `captureMessage`, `captureFeedback`, scope, `startTransaction` /
-  `startSpan`, `showFeedbackWidget`, `flush`), integrations (`networkIntegration`,
-  `fetchIntegration`, `xhrIntegration`, `historyIntegration`,
-  `localStorageIntegration`, `sessionStorageIntegration`,
-  `indexedDbIntegration`), types.
-* `@bugcapsule/web/core`: environment-neutral capsule model, codec with
-  bounded decoding, validator, redaction, request keys, fixtures, flight
-  recorder, replay protocol types (browser, workers, Node).
+  `startSpan`, `showFeedbackWidget`, `flush`), the integrations
+  (`networkIntegration`, `fetchIntegration`, `xhrIntegration`,
+  `historyIntegration`, `localStorageIntegration`,
+  `sessionStorageIntegration`, `indexedDbIntegration`, `sentryCompanion`) and
+  types.
+- `@bugcapsule/web/core`: the environment-neutral capsule model, codec with
+  bounded decoding, validator, redaction, request keys, flight recorder and
+  replay protocol types. Works in browsers, workers and Node.
 
-See the [repository README](../../README.md) for the quickstart and details.
+Related packages: [`@bugcapsule/react`](https://www.npmjs.com/package/@bugcapsule/react),
+[`@bugcapsule/web-replay`](https://www.npmjs.com/package/@bugcapsule/web-replay),
+[`@bugcapsule/cli`](https://www.npmjs.com/package/@bugcapsule/cli).
 
 ## Using BugCapsule with Sentry
 
 If the app already uses Sentry for errors, keep it: Sentry stays the error
 and issue tool, and BugCapsule captures the replayable capsule for the same
-failure. The `sentryCompanion()` integration (included in the 0.4.0-beta.1 candidate; absent from 0.3.0)
+failure. The `sentryCompanion()` integration (since 0.4.0-beta.1)
 records each side's id on the other, so one Sentry event maps to one capsule
 by id (never by message or time):
 
@@ -46,11 +65,7 @@ the Sentry JavaScript SDK v8 and later (`processEvent`); it was tested with
 ### Install and set up
 
 ```bash
-# Build the beta candidate locally before registry publication.
-npm install && npm run build
-npm pack -w @bugcapsule/web
-# In your application, install the resulting tarball and Sentry:
-npm install /path/to/bugcapsule-web-0.4.0-beta.1.tgz @sentry/browser
+npm install @bugcapsule/web @sentry/browser
 ```
 
 ```ts

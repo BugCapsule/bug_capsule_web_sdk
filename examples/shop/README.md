@@ -16,29 +16,31 @@ Fix toggles for verification, applied at build time without editing sources:
 
 ## Run it
 
+You need a BugCapsule project with an SDK token (**Project settings → Keys →
+SDK tokens**), the origin `http://127.0.0.1:4317` allowed for that project,
+and the [`bugcapsule` CLI](../../README.md#install-the-cli) logged in.
+
 ```bash
 # repository root
 npm install && npm run build
-node examples/shop/api-server.mjs                       # demo API on :4318
-# backend with CORS for the demo origin: CORS_ALLOWED_ORIGINS=http://127.0.0.1:4317
+node examples/shop/api-server.mjs                       # the demo shop's own API on :4318
+
 cd examples/shop
-# the SDK token from the dashboard (or VITE_BUGCAPSULE_BACKEND_URL + VITE_BUGCAPSULE_INGEST_KEY)
 VITE_BUGCAPSULE_TOKEN=bcsdk.v1.… \
 VITE_BUGCAPSULE_ALLOW_REPLAY=true npx vite build && npx vite preview --port 4317 --strictPort --host 127.0.0.1
 ```
 
-Drive a bug by hand, or with the QA automation script (headless Chromium;
-prints the backend id of the uploaded capsule):
+Trigger a bug by hand, or with the QA automation script (headless Chromium;
+it prints the id of the uploaded capsule):
 
 ```bash
 node scripts/capture.mjs --bug race
 node scripts/capture.mjs --bug discontinued --offline-then-reload   # queued offline, uploaded after a reload
 ```
 
-Then stop the preview (the CLI serves its own build) and:
+Then stop the preview (the CLI serves its own build) and replay:
 
 ```bash
-export BUGCAPSULE_URL=http://127.0.0.1:8787 BUGCAPSULE_SECRET_KEY=bcs_…
 bugcapsule inspect <id>
 bugcapsule run <id> -n 3 -p examples/shop                          # REPRODUCED 3/3
 bugcapsule verify <id> -n 3 -p examples/shop                       # STILL FAILING 3/3
