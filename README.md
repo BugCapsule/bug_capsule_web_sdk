@@ -55,19 +55,16 @@ bugcapsule regress ─► runs in CI from now on
 ## Install
 
 ```bash
-npm install @bugcapsule/web @bugcapsule/react     # @bugcapsule/react only for React apps
-npm install -D @bugcapsule/web-replay             # only where you run `bugcapsule run` / `verify`
-npm install -D @bugcapsule/cli                    # only for source-map upload in CI
+npm install @bugcapsule/web@beta @bugcapsule/react@beta     # @bugcapsule/react only for React apps
+npm install -D @bugcapsule/web-replay@beta             # only where you run `bugcapsule run` / `verify`
+npm install -D @bugcapsule/cli@beta                    # only for source-map upload in CI
 ```
 
 Install `@bugcapsule/web` and `@bugcapsule/react` at the same version: the React
 package needs that exact version as a peer dependency.
 
-> **Versions.** The latest release on npm is `0.4.0-beta.1`. This README
-> describes `main`. **SDK tokens** (`token:`) and **`BugCapsule.status()`**
-> ship in the next release. On `0.4.0-beta.1`, connect with an
-> [explicit address and ingest key](#connect-with-an-address-and-ingest-key)
-> instead.
+> **Versions.** SDK tokens and connection status are available starting with `0.4.0-beta.2`.
+> Existing explicit backend configuration remains supported.
 
 ## Connect your app
 
@@ -237,7 +234,7 @@ tool shipped in the Flutter package, so it needs
 projects.
 
 ```bash
-dart pub global activate bug_capsule 0.4.1-beta.1
+dart pub global activate bug_capsule 0.4.1-beta.2
 bugcapsule --version
 ```
 

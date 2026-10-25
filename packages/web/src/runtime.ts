@@ -20,7 +20,7 @@ import { parseConnectionToken, type ConnectionTokenError } from './connection-to
 import type { BugCapsuleConfig, BugCapsuleIntegration, BugCapsuleSession, BugCapsuleStatus, CaptureResult, ReplayContext, UploadResult } from './types.js';
 
 export const SDK_NAME = '@bugcapsule/web';
-export const SDK_VERSION = '0.4.0-beta.1';
+export const SDK_VERSION = '0.4.0-beta.2';
 
 /**
  * What happened to a failure's capsule (the Sentry companion reports it as
