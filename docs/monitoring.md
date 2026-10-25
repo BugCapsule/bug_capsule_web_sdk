@@ -1,9 +1,10 @@
 # Monitoring (errors, release health, tracing, feedback)
 
-The web SDK implements the BugCapsule monitoring contract
-([`monitoring-v1`](../../bug_capsule_backend/docs/monitoring-v1.md)): besides
-capsules, it sends light, high-volume signals to `POST /v1/envelope` with the
-same ingest key:
+Besides capsules, the web SDK sends light, high-volume monitoring signals to
+BugCapsule with the same SDK token (or ingest key). Overview for every
+platform: [docs.bugcapsule.com/monitoring](https://docs.bugcapsule.com/monitoring.html).
+
+
 
 | Signal | Envelope item | What the SDK does |
 |---|---|---|
@@ -16,10 +17,9 @@ When a capsule is written for a failure, the error event carries the capsule's
 `capsuleId` and the capsule carries `manifest.monitoring = {eventId, traceId,
 release, environment}`, so the issue lists the capsules that replay it.
 
-Monitoring is on whenever a `backend` is configured. `monitoring: false`
-turns it off (capsules unaffected); the backend can turn it off with
-`monitoringEnabled: false`, and its kill switch (`enabled: false`) stops
-everything. Nothing is sent during replay.
+Monitoring is on whenever a `token` or `backend` is configured. `monitoring: false`
+turns it off (capsules unaffected); your project settings can turn it off remotely,
+and the project's kill switch stops everything. Nothing is sent during replay.
 
 Apps that use Sentry for monitoring can turn BugCapsule monitoring off and
 link capsules to Sentry events instead: see
@@ -34,7 +34,7 @@ await BugCapsule.init({
   appVersion: '1.4.0',
   appBuild: '52',
   mode: 'production',
-  backend: { url: 'https://bugcapsule.example.com', ingestKey: 'bci_…' },
+  token: 'bcsdk.v1.…',
   integrations: [networkIntegration(), historyIntegration()],
 
   release: 'shop-web@1.4.0+52',       // match what `sourcemaps upload --release` uses
@@ -47,8 +47,9 @@ await BugCapsule.init({
 BugCapsule.setUser({ id: user.id, segment: user.plan });
 ```
 
-The backend must allow the app's origin (`CORS_ALLOWED_ORIGINS`) **and** the
-`Content-Encoding` request header (envelopes over 1 KiB are gzipped). APIs
+Your app's origin must be allowed for your BugCapsule project (send the exact
+origins to your BugCapsule contact; envelopes over 1 KiB are sent gzipped with a
+`Content-Encoding` header). APIs
 on other origins listed in `tracePropagationTargets` must allow the
 `traceparent` and `baggage` request headers in their CORS configuration.
 
@@ -234,7 +235,7 @@ at least once; the server deduplicates by `eventId`, `sid` + `seq` and
 ```bash
 npx @bugcapsule/cli sourcemaps inject dist
 BUGCAPSULE_SECRET_KEY=bcs_… npx @bugcapsule/cli sourcemaps upload dist \
-  --url https://bugcapsule.example.com --release shop-web@1.4.0+52 --url-prefix '~/'
+  --url https://api.bugcapsule.com --release shop-web@1.4.0+52 --url-prefix '~/'
 find dist -name '*.map' -delete    # do not deploy the maps
 ```
 
