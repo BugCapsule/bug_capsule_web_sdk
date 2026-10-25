@@ -1,248 +1,258 @@
-# BugCapsule web SDK
+# BugCapsule Web SDK
 
-BugCapsule turns a failure QA saw in the browser into a portable `.bugcapsule`
-capsule that a developer can **replay against the real app** in Chromium,
-**verify after a fix**, and keep as a **regression test**: the same
-capture → replay → verify → regression workflow as the
-[Flutter SDK](../bug_capsule_flutter_sdk), with the same capsule format
-([spec v1](../bug_capsule_flutter_sdk/spec/capsule-v1.md), runtime contracts in
-[runtimes-v1](../bug_capsule_flutter_sdk/spec/runtimes-v1.md)) and the same
-`bugcapsule` CLI and backend.
+BugCapsule records what led up to a bug in your web app and saves it as a
+portable `.bugcapsule` file. A developer can **replay** that file against the
+real app in Chromium, **verify** a fix against it, and keep it as a
+**regression test**. The same SDK also reports errors, release health,
+performance traces and user feedback, and links each error to the capsule that
+replays it.
 
 ```
-QA hits a bug ─► capsule captured, redacted, queued in IndexedDB, uploaded
-                 bugcapsule run <id>          ─► REPRODUCED 3/3   (Playwright drives the real app)
-fix the code ─►  bugcapsule verify <id>       ─► FIXED 3/3
-                 bugcapsule regress add <id> && bugcapsule regress run
+QA hits a bug      ─► capsule captured, redacted on the device, uploaded
+bugcapsule run     ─► REPRODUCED 3/3   (Playwright drives your real app)
+fix the code
+bugcapsule verify  ─► FIXED 3/3
+bugcapsule regress ─► runs in CI from now on
 ```
+
+📖 Full documentation: **[docs.bugcapsule.com/web](https://docs.bugcapsule.com/web.html)**
+
+## Contents
+
+- [Packages](#packages)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Connect your app](#connect-your-app)
+- [Make bugs replayable](#make-bugs-replayable)
+- [Replay, verify and keep a regression test](#replay-verify-and-keep-a-regression-test)
+- [Monitoring](#monitoring)
+- [Privacy](#privacy)
+- [Going to production](#going-to-production)
+- [Supported browsers](#supported-browsers)
+- [Limitations](#limitations)
+- [Demo app](#demo-app)
+- [More documentation](#more-documentation)
+- [Support and license](#support-and-license)
+
+## Packages
 
 | Package | What it is |
 |---|---|
-| [`@bugcapsule/web`](packages/web) | Framework-independent SDK (TypeScript types included). `@bugcapsule/web/core` is the environment-neutral model/codec/redaction/request-key core. |
-| [`@bugcapsule/react`](packages/react) | Thin React helpers: actions, tracked inputs, state, error boundary, capture button, React Router listener (`@bugcapsule/react/react-router`). |
-| [`@bugcapsule/web-replay`](packages/web-replay) | Node + Playwright runner the CLI launches per replay attempt (dev dependency). |
-| [`@bugcapsule/cli`](packages/cli) | Build tooling: `sourcemaps inject` (debug ids) and `sourcemaps upload` for symbolicated stack traces. |
-| [`examples/shop`](examples/shop) | React demo with four planted bugs. |
+| [`@bugcapsule/web`](packages/web) | The SDK. No framework, no dependencies, TypeScript types included. `@bugcapsule/web/core` holds the environment-neutral capsule model, codec and redaction. |
+| [`@bugcapsule/react`](packages/react) | React hooks and components: actions, tracked inputs and state, error boundary, capture button, feedback widget, React Router listener. |
+| [`@bugcapsule/web-replay`](packages/web-replay) | The Playwright runner the `bugcapsule` CLI starts for each replay attempt. Dev dependency. |
+| [`@bugcapsule/cli`](packages/cli) | Build tooling: injects debug ids and uploads source maps so minified stack traces become readable. |
+| [`examples/shop`](examples/shop) | A React demo shop with four planted bugs. |
 
-## Quickstart
+## Requirements
+
+- A BugCapsule project. Sign in at [app.bugcapsule.com](https://app.bugcapsule.com).
+- A modern browser for capture. Replay runs in Chromium.
+- Node 20+ for the replay runner and the source-map CLI.
+- React 18+ for `@bugcapsule/react`. React Router 6.4+ for the route listener (optional).
+- The `bugcapsule` CLI for replay ([install it](#install-the-cli)).
+
+## Install
 
 ```bash
-npm install @bugcapsule/web @bugcapsule/react
-npm install -D @bugcapsule/web-replay   # only where you run `bugcapsule run|verify`
+npm install @bugcapsule/web @bugcapsule/react     # @bugcapsule/react only for React apps
+npm install -D @bugcapsule/web-replay             # only where you run `bugcapsule run` / `verify`
+npm install -D @bugcapsule/cli                    # only for source-map upload in CI
 ```
 
-Generate an SDK token in the BugCapsule dashboard (Project settings → Keys →
-SDK tokens), then:
+Install `@bugcapsule/web` and `@bugcapsule/react` at the same version: the React
+package needs that exact version as a peer dependency.
+
+> **Versions.** The latest release on npm is `0.4.0-beta.1`. This README
+> describes `main`. **SDK tokens** (`token:`) and **`BugCapsule.status()`**
+> ship in the next release. On `0.4.0-beta.1`, connect with an
+> [explicit address and ingest key](#connect-with-an-address-and-ingest-key)
+> instead.
+
+## Connect your app
+
+### 1. Get an SDK token
+
+In the dashboard, open **Project settings → Keys → SDK tokens** and generate a
+token. It looks like `bcsdk.v1.…` and is shown once, so copy it right away.
+
+The SDK token is the only value your app needs. It holds your BugCapsule
+address and a send-only credential: it can upload capsules and events and read
+capture settings, nothing else. That makes it safe to ship in a browser bundle.
+You can rotate or revoke it in the dashboard at any time.
+
+### 2. Initialize the SDK first
 
 ```ts
-// main.ts: the first thing the app does
+// main.ts: the first thing your app does
 import { BugCapsule } from '@bugcapsule/web';
 
 await BugCapsule.init({ token: 'bcsdk.v1.…' });
 renderApp();
 ```
 
-That is a complete connection. The token carries your BugCapsule address
-and an ingest-only credential: it can send Capsules and events and read
-capture settings, nothing else, so it is safe in a web bundle. Hosted and
-self-hosted BugCapsule work the same way; the token knows where to go.
-`appVersion` defaults to the version part of `release`, else `unknown`.
+That is a complete connection. A few rules:
 
-Check the connection from the app:
+- **Await `init` before you render.** In replay, `init` restores storage and
+  state before your app reads it.
+- **Call it before any code keeps its own reference to `fetch`.** Code that
+  grabbed `fetch` earlier bypasses capture and replay.
+- **It never breaks your app.** A wrong, revoked or unreachable token never
+  throws and never delays startup; the app simply runs without BugCapsule.
+
+### 3. Get your origin allowed
+
+Browsers only let the SDK reach BugCapsule from origins your project allows.
+Send your BugCapsule contact the exact origins your app runs on, including
+scheme and port (for example `https://app.example.com` and
+`http://localhost:5173`). Until an origin is allowed, the browser console shows
+CORS errors and nothing is uploaded.
+
+### 4. Check the connection
 
 ```ts
-console.log(BugCapsule.status());
-// connection.state: 'connected' once the configuration was fetched;
-// connection.firstEventAcceptedAt / firstCapsuleAcceptedAt once data arrived;
-// instrumentation.missing: the replay adapters not set up yet
+const { connection, instrumentation } = BugCapsule.status();
+connection.state;                   // 'connected' once the configuration was fetched
+connection.firstCapsuleAcceptedAt;  // set once a capsule reached your project
+connection.firstEventAcceptedAt;    // set once a monitoring event arrived
+instrumentation.missing;            // replay adapters you have not added yet
 ```
 
-| `connection.state` | Meaning |
-|---|---|
-| `connecting` | No configuration fetched yet in this page session |
-| `connected` | Configuration fetched: address, token and network work |
-| `offline` | BugCapsule can't be reached; data stays in the outbox and is retried |
-| `rejected` | The token was refused: `reason` is `token_revoked`, `token_expired` or `token_unknown`, `message` says what to do. Capture and uploads stop for the page session |
-| `invalid_token` / `unsupported_token_version` | The token can't be read (damaged, a key pasted instead, or made for a newer SDK). One `[bugcapsule]` line in the console says why; the app runs without BugCapsule |
-| `disabled` | `enabled: false`, or capture switched off for the project |
+| `connection.state` | Meaning | What to do |
+|---|---|---|
+| `connecting` | No configuration fetched yet in this page session. | Wait a moment. |
+| `connected` | The configuration was fetched: address, token and network work. | Nothing. |
+| `offline` | BugCapsule can't be reached. Data stays in the outbox and is retried. | Check the network and the console for CORS errors. |
+| `rejected` | The token was refused. `reason` is `token_revoked`, `token_expired` or `token_unknown`; `message` says what to do. Capture stops for this page session. | Generate a new token. |
+| `invalid_token` / `unsupported_token_version` | The token can't be read: damaged, a key pasted instead, or made for a newer SDK. One `[bugcapsule]` console line says why. | Paste the full `bcsdk.v1.…` token, or update the SDK. |
+| `disabled` | `enabled: false`, or capture is switched off for the project. | — |
 
-A wrong, revoked or unreachable token never throws from `init` and never
-delays your app's start.
+The dashboard's onboarding shows the same two confirmations: **configuration
+fetched** (the app reached BugCapsule) and **first event or capsule received**
+(captured data arrived).
 
-### Complete capture and replay (progressive)
+### Connect with an address and ingest key
 
-The token connects. Faithful replay also needs the app's network, navigation
-and state, which you add as you go:
+For self-hosted setups, older SDK versions, or apps that already pass an
+address explicitly:
 
 ```ts
-import { BugCapsule, networkIntegration, historyIntegration, localStorageIntegration } from '@bugcapsule/web';
+await BugCapsule.init({
+  backend: { url: 'https://api.bugcapsule.com', ingestKey: 'bci_…' },
+});
+```
+
+`backend` wins when both `backend` and `token` are set. The ingest key is
+public like the token. **Never put a `bcs_…` secret key in an app.**
+
+## Make bugs replayable
+
+Being connected is not the same as faithful replay. Replay also needs your
+app's network, navigation and state. Add them as you go;
+`BugCapsule.status().instrumentation.missing` tells you what is left.
+
+```ts
+import {
+  BugCapsule,
+  networkIntegration,
+  historyIntegration,
+  localStorageIntegration,
+} from '@bugcapsule/web';
 
 await BugCapsule.init({
   token: 'bcsdk.v1.…',
   appVersion: '1.4.0',
   appBuild: '52',
-  mode: 'qa',                                   // 'debug' | 'qa' | 'production' (sampled)
+  mode: 'qa',                                  // 'debug' | 'qa' | 'production' (sampled, the default)
   gitSha: import.meta.env.VITE_BUGCAPSULE_GIT_SHA,
   integrations: [
+    // Fields that change on every run must not affect request matching.
     networkIntegration({ rules: [{ method: 'POST', path: '/api/checkout', ignoreBodyFields: ['timestamp', 'nonce'] }] }),
     historyIntegration(),
     localStorageIntegration({ allowPrefixes: ['shop.'] }),
   ],
+  // Replay only in dev and test builds. Keep this false in production.
   allowReplay: import.meta.env.DEV || import.meta.env.VITE_BUGCAPSULE_ALLOW_REPLAY === 'true',
 });
-
-renderApp();
 ```
 
-**Explicit backend (setups from before tokens).** `backend: { url:
-'https://bugcapsule.example.com', ingestKey: 'bci_…' }` still works and wins
-over `token`. Never put a `bcs_` secret key in an app.
+> Leaving out `mode` means `'production'`, which records only a sample of
+> sessions (10% by default). Use `'qa'` in QA builds so every session records.
 
-Await `init` before rendering: in replay it restores storage and state
-there. Call it before any code keeps its own reference to `fetch`.
+### Hooks that make more bugs reproducible
 
-The same `init` also turns on **monitoring** (errors, release health,
-tracing, user feedback; [docs/monitoring.md](docs/monitoring.md)). Add a
-`release` and, for performance data, a `tracesSampleRate`:
-
-```ts
-await BugCapsule.init({
-  …,
-  release: 'shop-web@1.4.0+52',
-  tracesSampleRate: 0.2,
-  tracePropagationTargets: ['api.example.com'],   // default: same origin
-});
-BugCapsule.setUser({ id: user.id });
-```
-
-### Make more bugs replayable
-
-| Hook | Why |
+| Add this | Why |
 |---|---|
-| `onClick={BugCapsule.action('cart.checkout', checkout)}` + `data-bugcapsule-action="cart.checkout"` | Semantic replay by id; the attribute is also the stable selector for click replay |
-| `BugCapsule.trackInput('login.email', inputEl)` / React `useTrackedInput`, `useTrackedState` | Typed text is replayed. Password inputs, `data-bugcapsule-sensitive` elements, `sensitive: true` and sensitive-looking ids record `[REDACTED]` |
-| `BugCapsule.check('cart_total_non_negative', total >= 0)` / `BugCapsule.fail(id)` | Wrong behaviour that does not throw becomes a checkable failure |
-| `BugCapsule.reportError(e)` / `<BugCapsuleErrorBoundary>` | Errors your code or React catches never reach `window.onerror` |
-| `BugCapsule.registerState('cart', { serialize, restore })` / `useBugCapsuleState` | App-owned state in checkpoints, restored in replay |
-| `indexedDbIntegration([{ name, snapshot, restore }])` | Application-owned IndexedDB stores, through adapters you write (the SDK never reads IndexedDB itself) |
-| `BugCapsule.now()` / `BugCapsule.date()` instead of `Date.now()` | Replay returns the recorded wall clock |
-| `BugCapsule.random()` instead of `Math.random()` | Seeded per session, same seed in replay |
+| `onClick={BugCapsule.action('cart.checkout', checkout)}` and `data-bugcapsule-action="cart.checkout"` | Replay can invoke the action by id; the attribute is also a stable selector for click replay. |
+| `BugCapsule.trackInput('login.email', inputEl)`, or `useTrackedInput` / `useTrackedState` in React | Typed text is replayed. Password inputs, `data-bugcapsule-sensitive` elements and `sensitive: true` are recorded as `[REDACTED]`. |
+| `BugCapsule.check('cart_total_non_negative', total >= 0)` / `BugCapsule.fail(id)` | Wrong behaviour that doesn't throw becomes a failure replay can check. |
+| `BugCapsule.reportError(e)` / `<BugCapsuleErrorBoundary>` | Errors your code or React catches never reach `window.onerror`. |
+| `BugCapsule.registerState('cart', { serialize, restore })` / `useBugCapsuleState` | Your app's own state is saved in checkpoints and restored in replay. |
+| `indexedDbIntegration([{ name, snapshot, restore }])` | Your IndexedDB stores, through adapters you write. The SDK never reads IndexedDB on its own. |
+| `BugCapsule.now()` / `BugCapsule.date()` instead of `Date.now()` | Replay returns the recorded time. |
+| `BugCapsule.random()` instead of `Math.random()` | Seeded per session, same seed in replay. |
 
-React:
+### React
 
 ```tsx
-import { useBugCapsuleAction, useTrackedState, BugCapsuleErrorBoundary, BugCapsuleCaptureButton } from '@bugcapsule/react';
+import { BugCapsuleErrorBoundary, BugCapsuleCaptureButton } from '@bugcapsule/react';
 import { BugCapsuleRouteListener } from '@bugcapsule/react/react-router';
 
 <BrowserRouter>
-  <BugCapsuleRouteListener />              {/* route events with push/pop/replace */}
-  <BugCapsuleErrorBoundary fallback={<Oops />}><Routes>…</Routes></BugCapsuleErrorBoundary>
-  <BugCapsuleCaptureButton />              {/* QA builds only */}
+  <BugCapsuleRouteListener />                {/* route changes, named transactions */}
+  <BugCapsuleErrorBoundary fallback={<Oops />}>
+    <Routes>…</Routes>
+  </BugCapsuleErrorBoundary>
+  <BugCapsuleCaptureButton />                {/* QA builds only; hidden in production mode */}
 </BrowserRouter>
 ```
 
-## Monitoring
+See [`packages/react`](packages/react) for every hook and component.
 
-Every page load (not only sampled capsule sessions) sends light envelopes to
-`POST /v1/envelope` ([monitoring-v1](../bug_capsule_backend/docs/monitoring-v1.md)):
+### What is captured
 
-| Signal | How |
-|---|---|
-| Error events | `error`, `unhandledrejection`, `reportError`, `check`/`fail`, React error boundary and React 19 root callbacks, opt-in `console.error`, `captureException` / `captureMessage`. Frames parsed from Chromium, Firefox and Safari stacks with `inApp`, `debugImages` from injected debug ids, the `cause` chain, breadcrumbs derived from the flight recorder plus clicks, fetch/XHR, navigation and console, the scope (`setUser`, `setTag`, `setContext`, `withScope` …), `beforeSend`, fingerprints |
-| Capsule link | an event for a failure that gets a capsule carries `capsuleId`; the capsule carries `manifest.monitoring = {eventId, traceId, release, environment}` |
-| Release health | one session per page load, `crashed` on an unhandled error, `exited` on `pagehide` |
-| Tracing | pageload and navigation transactions (History API, React Router route patterns), `http.client` spans, resource / paint / long-task spans, web vitals (LCP, INP, CLS, FCP, TTFB), `startTransaction` / `startSpan`, `tracesSampleRate` / `tracesSampler`, `traceparent` + `baggage` to `tracePropagationTargets` |
-| User feedback | `captureFeedback`, and an opt-in themeable widget (`showFeedbackWidget`, `<BugCapsuleFeedbackWidget />`), optionally with a capsule |
-
-Envelopes are redacted with the capsule rules before they are stored, kept
-in their own IndexedDB outbox (30 envelopes / 5 MiB) and sent with the same
-backoff and `Retry-After` handling as capsules. Nothing is sent during
-replay, and the trace headers never enter capsules or request keys. The
-backend can lower sampling and turn monitoring off remotely; `monitoring:
-false` turns it off locally. Symbolication: `npx @bugcapsule/cli sourcemaps
-inject dist` then `sourcemaps upload` in CI ([packages/cli](packages/cli)).
-
-### Alongside Sentry
-
-Apps that keep Sentry for errors add `sentryCompanion()` to `Sentry.init`
-and set `monitoring: false` in `BugCapsule.init`: each Sentry error event
-gets a `bugcapsule.capsule_id` tag and the capsule gets
-`manifest.links.sentry.eventId`. See
-[Using BugCapsule with Sentry](packages/web/README.md#using-bugcapsule-with-sentry).
-
-## What is captured
-
-| Area | How | Replay |
+| Area | Captured | In replay |
 |---|---|---|
-| Pointer (mouse, touch, pen) | `pointerdown/up/cancel` and moves while pressed, viewport CSS px, plus a target descriptor on `down` (`data-bugcapsule-action`, `data-testid`/`id` selector, visible text) | Real browser input through Playwright at the recorded coordinates; `pointer.mismatch`, `selector.ambiguous`, `selector.missing` when the target moved |
-| Semantic actions | `BugCapsule.action` / `useBugCapsuleAction` | Invoked by id (or clicks the element declaring it) |
-| Tracked input | `trackInput` / `trackValue` / React hooks | Native value setter + `input`/`change` events |
-| Navigation | `historyIntegration` (pushState, replaceState, popstate, hashchange); `BugCapsuleRouteListener` for React Router | Reproduced by the inputs; the runner opens the checkpoint's location |
-| Errors | `error`, `unhandledrejection`, `reportError`, error boundary | Matched by signature |
-| Assertions | `check` / `fail` | Matched by id |
-| Network | `fetch` and `XMLHttpRequest` (`networkIntegration`) | Recorded responses served in page with recorded latency, status, headers, errors, cancellation and timeouts |
-| Storage | allowlisted `localStorage` / `sessionStorage` keys; IndexedDB adapters; registered state | Restored before the app renders (the runner also restores web storage before any page script) |
-| Lifecycle | `visibilitychange`, `pagehide`, `pageshow` | Synthetic events with an overridden `document.visibilityState` (`partial`) |
+| Pointer (mouse, touch, pen) | presses, releases, moves while pressed, plus the target element | Real browser input at the recorded coordinates |
+| Actions | `BugCapsule.action` / `useBugCapsuleAction` | Invoked by id |
+| Text | tracked inputs only | Value set and `input`/`change` dispatched |
+| Navigation | History API, hash changes, React Router | Reproduced by the inputs |
+| Errors and assertions | `error`, `unhandledrejection`, `reportError`, error boundary, `check` / `fail` | Matched by signature or id |
+| Network | `fetch` and `XMLHttpRequest` | Recorded responses served with the recorded latency, status and errors |
+| Storage | allowlisted `localStorage` / `sessionStorage` keys, IndexedDB adapters, registered state | Restored before your app renders |
 
-Never captured automatically: input values (only tracked inputs), DOM
-content, cookies, storage outside the allowlist, password inputs.
+**Never captured:** untracked input values, DOM content, cookies, storage
+outside your allowlist, password inputs.
 
-## Network capture and replay
+Details on request matching, body limits and storage:
+[docs/how-it-works.md](docs/how-it-works.md).
 
-* Request keys, query normalization, body hashing, endpoint rules and
-  occurrence order are exactly the capsule-v1 rules (checked against the
-  shared conformance fixtures).
-* Bodies are never buffered whole: the SDK reads a `clone()` of the response
-  up to `maxBodyBytes` (256 KiB text, 64 KiB binary) and then cancels the
-  clone; the app consumes the original stream unchanged. Larger bodies are
-  `truncated`, `text/event-stream` responses `omitted`. Streaming request
-  bodies (`ReadableStream`), `FormData` and XHR `Blob` bodies are never read:
-  they are keyed without a body hash.
-* App wrappers installed after `init` sit above the SDK's, so app
-  interceptors and transformations still run during replay; only the bytes on
-  the wire come from the capsule.
-* Replay is strict: an unrecorded request fails like a network error and
-  reports `network.unrecorded`; nothing reaches real services. The runner
-  additionally blocks every browser request to an origin other than the app's
-  (images, scripts, requests made by code that bypassed the SDK) and reports
-  `network.escaped`. Allow static origins with `web.allowOrigins`.
+## Replay, verify and keep a regression test
 
-## Privacy controls
+### Install the CLI
 
-Redaction runs on the device before anything is stored or uploaded, with the
-same rules as every BugCapsule SDK (capsule-v1 *Redaction*): sensitive keys
-in bodies, storage and state; sensitive headers; URL user info and sensitive
-query/fragment parameters; credentials in free text (bearer tokens, JWTs, API
-key formats, card numbers). Add `redactKeys`, `redactHeaders`,
-`redactPatterns`, `beforeRecord`, `beforeCheckpoint`,
-`networkIntegration({ exclude })` and `historyIntegration({ sanitizeLocation })`.
-The backend can add redaction keys, turn body capture off, lower sampling and
-switch capture off remotely. Inspect real capsules with `bugcapsule inspect`
-before widening a rollout. Redaction does not find personal data that is not
-a credential (names, emails, addresses) or secrets in URL paths.
+The `bugcapsule` CLI replays capsules from every BugCapsule SDK. It is a Dart
+tool shipped in the Flutter package, so it needs
+[Flutter](https://docs.flutter.dev/get-started/install) installed even for web
+projects.
 
-## Storage and uploads
+```bash
+dart pub global activate bug_capsule 0.4.1-beta.1
+bugcapsule --version
+```
 
-* IndexedDB (`bugcapsule` database): upload outbox (10 capsules / 10 MiB /
-  7 days, oldest evicted first), the newest 20 saved captures, the cached
-  remote config. Without IndexedDB (blocked by privacy settings) the SDK keeps
-  them in memory.
-* Writes are single IndexedDB transactions; quota errors, corrupt records and
-  unavailable storage drop the capsule, never the app.
-* Queues survive reloads. Several tabs share one queue; only one uploads at a
-  time (Web Locks, or a lease record on insecure origins without them).
-* Uploads retry 30 s → 1 h with jitter, honouring `Retry-After` (a server
-  deadline also survives reloads). Nothing relies on an upload finishing while
-  the page unloads: the next page load uploads.
-* Uploads need a remote config fetched within 7 days; a kill switch purges the
-  queue and saved captures and persists; a rejected ingest key stops capture
-  for the page session.
-* The backend must allow your origin: `CORS_ALLOWED_ORIGINS=https://app.example.com`
-  ([backend README](../bug_capsule_backend/README.md)).
+If the shell can't find `bugcapsule`, add `~/.pub-cache/bin` to your `PATH`.
 
-## Replay with the CLI
+Log in with a personal token from **Project settings → Keys & CLI access**.
+In CI, use a service token in `BUGCAPSULE_TOKEN` instead.
 
-`bugcapsule.json` next to the app:
+```bash
+bugcapsule login --url https://api.bugcapsule.com --token bcp_…
+```
+
+### Configure replay
+
+Add a `bugcapsule.json` next to your app's `package.json`:
 
 ```json
 {
@@ -257,78 +267,147 @@ a credential (names, emails, addresses) or secrets in URL paths.
 }
 ```
 
+### Run it
+
 ```bash
-bugcapsule run <id> -n 3            # builds (on the capsule's commit when pinned), serves, replays in Chromium
-bugcapsule verify <id> -n 3         # builds the working tree
-bugcapsule run <id> --app-url http://127.0.0.1:4317/   # replay against an already running build
+bugcapsule list                         # capsules in your project
+bugcapsule inspect <id>                 # failure, eligibility, network, timeline
+bugcapsule run <id> -n 3                # builds the capsule's commit, serves it, replays in Chromium
+bugcapsule verify <id> -n 3             # builds your working tree; FIXED when the bug is gone
+bugcapsule regress add <id>             # keep it as a regression test
+bugcapsule regress run                  # in CI: exit 1 when a regression fails
+bugcapsule run <id> --app-url http://127.0.0.1:4317/   # replay against a build that is already running
 ```
 
-Each attempt opens a fresh browser context (isolated storage), sized like
-the recording, with the app's own SDK (`allowReplay: true`) driving the
-replay. The CLI refuses to start when something already serves `web.url`
-(it might be an old build). See [CLI runtimes](../bug_capsule_flutter_sdk/docs/cli-runtimes.md).
+Each attempt opens a fresh browser context sized like the recording. The CLI
+refuses to start when something already serves `web.url`, because it might be
+an old build. See the [CLI reference](https://docs.bugcapsule.com/cli.html)
+and [how verdicts work](https://docs.bugcapsule.com/verdicts.html).
 
-**Production protection.** Replay activates only when the app passes
-`allowReplay: true` *and* the page was opened by the runner (Playwright
-bindings). Wire `allowReplay` to a dev/test build flag; production builds
-leave it false, and then nothing (URLs, storage, messages, network, scripts in
-the page) can turn replay on. In a build with `allowReplay: true`, a script
-already running in the page could imitate the runner's bindings, which is one
-more reason to keep such builds out of production.
+**Replay is off in production.** It only turns on when your app passes
+`allowReplay: true` *and* the page was opened by the replay runner. Tie
+`allowReplay` to a dev or test build flag. With it `false`, nothing in the
+page (URLs, storage, messages, scripts) can turn replay on.
+
+## Monitoring
+
+The same `init` also turns on monitoring for every page load, not only for
+sessions that record a capsule:
+
+| Signal | What you get |
+|---|---|
+| Errors | Uncaught errors and rejections, `reportError`, `check`/`fail`, React error boundaries, `captureException` / `captureMessage`; stack frames, breadcrumbs, user and tags |
+| Release health | One session per page load, marked `crashed` on an unhandled error |
+| Performance | Pageload and navigation transactions, `fetch`/XHR spans, web vitals (LCP, INP, CLS, FCP, TTFB), custom spans |
+| User feedback | `captureFeedback`, and an optional themeable widget |
+
+When a capsule is written for an error, the error links to it, so each issue
+lists the capsules that replay it.
+
+```ts
+await BugCapsule.init({
+  token: 'bcsdk.v1.…',
+  release: 'shop-web@1.4.0+52',
+  tracesSampleRate: 0.2,
+  tracePropagationTargets: ['api.example.com'],   // default: same origin only
+});
+
+BugCapsule.setUser({ id: user.id });
+BugCapsule.captureException(error);
+```
+
+`monitoring: false` turns monitoring off; capsules keep working. All options:
+[docs/monitoring.md](docs/monitoring.md).
+
+**Readable stack traces.** Upload source maps from CI with
+[`@bugcapsule/cli`](packages/cli):
+
+```bash
+npx bugcapsule-cli sourcemaps inject dist
+BUGCAPSULE_SECRET_KEY=bcs_… npx bugcapsule-cli sourcemaps upload dist \
+  --url https://api.bugcapsule.com --release shop-web@1.4.0+52
+```
+
+### Already using Sentry?
+
+Keep it. Add `sentryCompanion()` to `Sentry.init` and set `monitoring: false`
+in `BugCapsule.init`. Each Sentry error then carries a `bugcapsule.capsule_id`
+tag pointing to the capsule that replays it. Setup and details:
+[Using BugCapsule with Sentry](packages/web/README.md#using-bugcapsule-with-sentry).
+
+## Privacy
+
+Redaction runs in the browser before anything is stored or uploaded:
+sensitive keys in bodies, storage and state; sensitive headers; credentials in
+URLs; and tokens, JWTs, API keys and card numbers in free text.
+
+Tighten it with `redactKeys`, `redactHeaders`, `redactPatterns`,
+`beforeRecord`, `beforeCheckpoint`, `networkIntegration({ exclude })` and
+`historyIntegration({ sanitizeLocation })`. Your project settings can also add
+redaction keys, turn off body capture, lower sampling or switch capture off
+remotely.
+
+Redaction is pattern-based. It does **not** find personal data that isn't a
+credential (names, emails, addresses) or secrets in URL paths. Inspect real
+capsules with `bugcapsule inspect` before a wider rollout. More:
+[Privacy and redaction](https://docs.bugcapsule.com/privacy.html).
+
+## Going to production
+
+- Use `mode: 'production'` with a deliberate `productionSampleRate` (default `0.1`).
+- Keep `allowReplay` `false` in production builds.
+- Learn the kill switch before you need it: `bugcapsule capture --on` stops capture
+  for every client. `bugcapsule capture --off` resumes it.
+- Upload source maps for every release, then remove the `.map` files from the deployment.
+- Read the [production checklist](https://docs.bugcapsule.com/production.html).
+
+Data waits in an IndexedDB outbox (10 capsules / 10 MiB / 7 days), survives
+reloads, and is shared safely between tabs. Storage errors drop a capsule,
+never your app.
 
 ## Supported browsers
 
 | Browser | Capture | Replay |
 |---|---|---|
-| Chromium / Chrome / Edge | implemented, tested (Playwright Chromium 153) | implemented, tested |
-| Firefox, Safari | uses only standard APIs (fetch, XHR, IndexedDB, CompressionStream, Pointer Events); **not tested** | not implemented (`web.browser` other than `chromium` is refused) |
+| Chrome, Edge, other Chromium | Supported and tested | Supported and tested |
+| Firefox, Safari | Uses only standard APIs; covered by the browser test suite but not certified | Not supported |
 
 ## Limitations
 
-* Lifecycle replay is synthetic (`partial`). `Date.now()`, timers,
-  animations and `Math.random()` are not virtualized; use `BugCapsule.now()` /
-  `random()`.
-* Hover-only interactions are not recorded (moves are recorded only while a
-  pointer is pressed). Keyboard input is replayed only through tracked inputs.
-* WebSockets, EventSource payloads, service workers (blocked during replay),
-  `navigator.sendBeacon`, and third-party iframes are not captured.
-* A fix that makes the app send requests the recording never saw cannot be
-  verified as FIXED: strict replay reports `network.unrecorded` and the
-  verdict is INCONCLUSIVE. Capture a capsule that covers the fixed path.
-* Synchronous XHR is replayed without its recorded latency.
-* Cross-origin script errors without CORS headers arrive as `Script error.`.
-* Capsules replay only in the web runtime (no cross-runtime replay).
-* Monitoring: the active span of `startSpan` is shared page-wide while async
-  work runs (browsers have no async context); the final session update sent
-  during unload is not confirmed (its queued copy is retried on the next
-  load). See [docs/monitoring.md](docs/monitoring.md#limitations).
+- `Date.now()`, timers, animations and `Math.random()` are not virtualized; use
+  `BugCapsule.now()` and `BugCapsule.random()`.
+- Hover-only interactions aren't recorded. Keyboard input is replayed only for
+  tracked inputs.
+- WebSockets, EventSource, service workers, `navigator.sendBeacon` and
+  third-party iframes are not captured.
+- Replay is strict: a request the recording never saw fails like a network
+  error. A fix that sends new requests verifies as `INCONCLUSIVE`; capture a
+  capsule that covers the fixed path.
+- Capsules replay only in the web runtime.
 
-## Development
+Full list: [docs/how-it-works.md#limitations](docs/how-it-works.md#limitations).
 
-```bash
-npm install
-npm run build                 # packages/*/dist (the demo uses the built packages)
-npm run test:unit             # core conformance (shared fixtures), outbox, remote config, monitoring, CLI
-npm run test:browser          # SDK in Chromium: capture, redaction, offline, kill switch, cross-tab, XHR, replay, monitoring, React
-npm run pack:all              # dist-packages/*.tgz for review (not published)
-```
+## Demo app
 
-The shared fixtures in `spec-fixtures/` are a copy of
-`bug_capsule_flutter_sdk/spec/fixtures` (`tool/sync_spec.sh` there); the unit
-tests fail when they differ.
+[`examples/shop`](examples/shop) is a React shop with four planted
+"can't reproduce" bugs (a race, a stale cache, bad server data and a wrong
+total) to try the whole capture → replay → verify loop.
 
-## Release procedure
+## More documentation
 
-1. `npm run build && npm test` and the demo E2E ([examples/shop](examples/shop/README.md)).
-2. Bump the version in the four `package.json` files and `SDK_VERSION` in
-   `packages/web/src/runtime.ts` (written into every capsule and envelope).
-3. `npm run pack:all`, inspect the tarballs (`tar -tzf`), install them in a
-   clean project and type-check (as done for 0.3.0).
-4. Publish from a clean checkout (`npm publish -w … --access public`) only
-   after review; record the git SHA of the release.
+| Topic | Where |
+|---|---|
+| Web SDK guide | [docs.bugcapsule.com/web](https://docs.bugcapsule.com/web.html) |
+| Quickstart (30 minutes, capture to verified fix) | [docs.bugcapsule.com/quickstart](https://docs.bugcapsule.com/quickstart.html) |
+| CLI reference | [docs.bugcapsule.com/cli](https://docs.bugcapsule.com/cli.html) |
+| Monitoring options | [docs/monitoring.md](docs/monitoring.md) |
+| How capture, replay and uploads work | [docs/how-it-works.md](docs/how-it-works.md) |
+| Troubleshooting | [docs.bugcapsule.com/troubleshooting](https://docs.bugcapsule.com/troubleshooting.html) |
+| Working on this repository | [docs/development.md](docs/development.md) |
 
-## Release validation (2026-10-23)
+## Support and license
 
-This repository is proprietary to Bug Capsule. Use, copying, modification, and distribution require prior written permission (see LICENSE). Local candidates are
-prepared without publishing. See `docs/release-readiness.md` for the current
-validation evidence and remaining release gates.
+Questions or access requests: [contact@bugcapsule.com](mailto:contact@bugcapsule.com).
+
+This SDK is proprietary software of Bug Capsule. Use, copying, modification
+and distribution require prior written permission. See [LICENSE](LICENSE).

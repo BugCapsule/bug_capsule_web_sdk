@@ -1,8 +1,12 @@
 # @bugcapsule/cli
 
-Build tooling for BugCapsule web monitoring: debug ids and source-map upload,
-so the backend can symbolicate minified stack frames
-([monitoring-v1 §3, §5.4](../../../bug_capsule_backend/docs/monitoring-v1.md)).
+Build tooling for the [BugCapsule web SDK](https://github.com/BugCapsule/bug_capsule_web_sdk#readme):
+injects debug ids into your bundles and uploads source maps, so error events
+from minified code show your original files and lines. Guide:
+[Release symbols and source maps](https://docs.bugcapsule.com/symbols.html).
+
+This is not the replay CLI. Replay uses `bugcapsule` from the
+[`bug_capsule`](https://pub.dev/packages/bug_capsule) Dart package.
 
 ```bash
 npm install -D @bugcapsule/cli
@@ -10,9 +14,9 @@ npm install -D @bugcapsule/cli
 # 1. after the build, before deploying
 npx bugcapsule-cli sourcemaps inject dist
 
-# 2. in CI, with the project secret key (never the ingest key, never in the app)
+# 2. in CI, with the project secret key from your CI secrets (never in the app)
 BUGCAPSULE_SECRET_KEY=bcs_… npx bugcapsule-cli sourcemaps upload dist \
-  --url https://bugcapsule.example.com --release shop-web@1.4.0+52
+  --url https://api.bugcapsule.com --release shop-web@1.4.0+52
 
 # 3. do not deploy the maps
 find dist -name '*.map' -delete
@@ -29,8 +33,7 @@ debug id derived from its content and writes it
 
 It is idempotent: bundles that already have a debug id are left alone.
 
-`upload` sends, for every bundle with a map, to `POST /v1/debug-files`
-(gzipped):
+`upload` sends, for every bundle with a map (gzipped):
 
 * the map: `kind=sourcemap`, `debugId`, `release` (with `--release`), `name`
   (`<url-prefix><path>.map`);
@@ -43,7 +46,7 @@ matches any origin) must match the path the bundles are served from, e.g.
 `--url-prefix '~/static/js'` for `dist/app.js` served as `/static/js/app.js`.
 `--url` defaults to `BUGCAPSULE_URL`; `--key` (or `BUGCAPSULE_SECRET_KEY`) is
 the project secret key. `--dry-run` shows what would change or be uploaded.
-Uploads retry on `429`/`5xx` (honouring `Retry-After`).
+Uploads retry on rate limits and temporary server errors (honouring `Retry-After`).
 
 The functions are also exported (`injectFile`, `uploadSourcemaps`,
 `findBundles`, `debugIdFromContent`) for bundler plugins.

@@ -1,6 +1,27 @@
 # @bugcapsule/react
 
-React helpers for [`@bugcapsule/web`](../web):
+React hooks and components for [`@bugcapsule/web`](https://www.npmjs.com/package/@bugcapsule/web).
+
+```bash
+npm install @bugcapsule/web @bugcapsule/react   # same version for both
+```
+
+Requires React 18+. The React Router listener needs React Router 6.4+.
+Setup guide: [docs.bugcapsule.com/web](https://docs.bugcapsule.com/web.html).
+
+```tsx
+import { BugCapsuleErrorBoundary, BugCapsuleCaptureButton } from '@bugcapsule/react';
+import { BugCapsuleRouteListener } from '@bugcapsule/react/react-router';
+
+<BrowserRouter>
+  <BugCapsuleRouteListener />
+  <BugCapsuleErrorBoundary fallback={<Oops />}><Routes>…</Routes></BugCapsuleErrorBoundary>
+  <BugCapsuleCaptureButton />
+</BrowserRouter>
+```
+
+## API
+
 
 * `useBugCapsuleAction(id, handler)`: semantic action (recorded, replayed by id).
 * `useTrackedInput(id, { sensitive })`: ref callback for uncontrolled inputs.

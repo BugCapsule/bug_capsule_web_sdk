@@ -1,8 +1,18 @@
 # @bugcapsule/web-replay
 
 The Playwright (Chromium) runner the `bugcapsule` CLI launches for each web
-replay attempt. Install it as a dev dependency of the app; the CLI finds it in
-`node_modules`.
+replay attempt. You don't run it yourself: install it as a dev dependency of
+your app and the CLI finds it in `node_modules`.
+
+```bash
+npm install -D @bugcapsule/web-replay
+npx playwright install chromium
+```
+
+Replay guide: [docs.bugcapsule.com/web](https://docs.bugcapsule.com/web.html) ·
+[CLI reference](https://docs.bugcapsule.com/cli.html)
+
+## How it works
 
 ```
 bugcapsule-web-runner --replay-url <armed attempt url> --app-url <app url> [--allow-origin <origin>]... [--headed] [--timeout <s>]
