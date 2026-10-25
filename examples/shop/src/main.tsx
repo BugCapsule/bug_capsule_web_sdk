@@ -14,6 +14,9 @@ await BugCapsule.init({
   mode: 'qa',
   gitSha: env.VITE_BUGCAPSULE_GIT_SHA || undefined,
   gitDirty: env.VITE_BUGCAPSULE_GIT_DIRTY === 'true',
+  // One SDK token from the dashboard is all a connection needs.
+  token: env.VITE_BUGCAPSULE_TOKEN || undefined,
+  // The pre-token setup (explicit backend URL + ingest key) still works and wins when set.
   backend:
     env.VITE_BUGCAPSULE_BACKEND_URL && env.VITE_BUGCAPSULE_INGEST_KEY
       ? { url: env.VITE_BUGCAPSULE_BACKEND_URL, ingestKey: env.VITE_BUGCAPSULE_INGEST_KEY }

@@ -31,6 +31,11 @@ export class StateIntegration implements BugCapsuleIntegration {
     this.session = session;
   }
 
+  /** Registered states (setup diagnostics). */
+  get size(): number {
+    return this.states.size;
+  }
+
   register<T>(key: string, serializer: StateSerializer<T>): () => void {
     this.states.set(key, serializer as StateSerializer);
     const replay = this.session?.replay;

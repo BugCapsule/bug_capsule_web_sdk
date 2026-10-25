@@ -16,7 +16,8 @@ import { BackendTransport, configScope, RemoteConfigController, type BugCapsuleT
 import { detectReplayBridge, ReplayEngine, type ReplayBridge } from './replay/engine.js';
 import { openStorage, type SdkStorage } from './storage/idb.js';
 import { saveCapture, UploadOutbox } from './storage/outbox.js';
-import type { BugCapsuleConfig, BugCapsuleIntegration, BugCapsuleSession, CaptureResult, ReplayContext, UploadResult } from './types.js';
+import { parseConnectionToken, type ConnectionTokenError } from './connection-token.js';
+import type { BugCapsuleConfig, BugCapsuleIntegration, BugCapsuleSession, BugCapsuleStatus, CaptureResult, ReplayContext, UploadResult } from './types.js';
 
 export const SDK_NAME = '@bugcapsule/web';
 export const SDK_VERSION = '0.4.0-beta.1';
@@ -77,6 +78,33 @@ export interface RuntimeOverrides {
   transport?: BugCapsuleTransport;
   random?: () => number;
   bridge?: ReplayBridge | null;
+}
+
+/** How the backend was configured, and why a token could not be used. */
+export interface ResolvedConnection {
+  source: 'token' | 'backend' | null;
+  tokenError: { error: ConnectionTokenError; message: string } | null;
+}
+
+/**
+ * Applies defaults and turns `token` into `backend` (docs: connection token
+ * v1). An explicit `backend` wins; an unusable token leaves no backend, so
+ * the app runs without BugCapsule instead of failing.
+ */
+export function resolveConfig(input: Readonly<BugCapsuleConfig>): { config: BugCapsuleConfig; connection: ResolvedConnection } {
+  const releaseVersion = input.release?.includes('@') ? input.release.slice(input.release.lastIndexOf('@') + 1) : input.release;
+  const config: BugCapsuleConfig = { ...input, appVersion: input.appVersion || releaseVersion || 'unknown', appBuild: input.appBuild || '0' };
+  if (input.backend) {
+    if (input.token) console.warn('[bugcapsule] both token and backend are set; using backend and ignoring token');
+    return { config, connection: { source: 'backend', tokenError: null } };
+  }
+  if (input.token === undefined || input.token === null) return { config, connection: { source: null, tokenError: null } };
+  const parsed = parseConnectionToken(input.token);
+  if (!parsed.ok) {
+    console.error(`[bugcapsule] the SDK token can't be used (${parsed.error}): ${parsed.message}. The app runs without BugCapsule.`);
+    return { config, connection: { source: 'token', tokenError: { error: parsed.error, message: parsed.message } } };
+  }
+  return { config: { ...config, backend: parsed.backend }, connection: { source: 'token', tokenError: null } };
 }
 
 const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -177,16 +205,24 @@ export class Runtime implements BugCapsuleSession {
   /** Primitive (or synthesized) thrown values, by failure signature, for a short window. */
   private readonly handledValues = new Map<string, { entry: HandledFailure; at: number }>();
 
+  readonly config: Readonly<BugCapsuleConfig>;
+  private readonly connection: ResolvedConnection;
+  private firstEventAcceptedAt: number | null = null;
+  private firstCapsuleAcceptedAt: number | null = null;
+
   constructor(
-    readonly config: Readonly<BugCapsuleConfig>,
+    input: Readonly<BugCapsuleConfig>,
     private readonly overrides: RuntimeOverrides = {},
   ) {
+    const resolved = resolveConfig(input);
+    this.config = resolved.config;
+    this.connection = resolved.connection;
     this.nativeFetch = typeof fetch === 'function' ? fetch.bind(globalThis) : ((() => Promise.reject(new Error('fetch unavailable'))) as unknown as typeof fetch);
     this.sampleRandom = overrides.random ?? Math.random;
-    this.integrations = [...(config.integrations ?? []), this.state];
+    this.integrations = [...(this.config.integrations ?? []), this.state];
     this.currentRedactor = this.baseRedactor();
-    this.captureBodies = config.captureNetworkBodies ?? true;
-    if (config.enabled === false) this.notRecording = 'disabled';
+    this.captureBodies = this.config.captureNetworkBodies ?? true;
+    if (this.config.enabled === false) this.notRecording = 'disabled';
   }
 
   // ------------------------------------------------------------ session API
@@ -330,8 +366,9 @@ export class Runtime implements BugCapsuleSession {
   private async prepareCapture(): Promise<void> {
     if (this.config.enabled === false) return;
     const storage = await this.storage();
-    const transport =
+    const base =
       this.overrides.transport ?? (this.config.backend ? new BackendTransport(this.config.backend, this.nativeFetch) : null);
+    const transport = base ? this.observed(base) : null;
     if (transport) {
       this.transport = transport;
       this.outbox = new UploadOutbox(storage, this.config.outboxLimits ?? {}, `bugcapsule:${this.config.storageName ?? 'bugcapsule'}:outbox`);
@@ -343,6 +380,11 @@ export class Runtime implements BugCapsuleSession {
         onChange: (prev, next) => this.applyRemote(prev, next),
         maxStaleMs: this.config.maxStaleConfigMs ?? 7 * 86_400_000,
         log: (m) => this.warnOnce(m),
+        onRejected: (f) =>
+          console.warn(
+            `[bugcapsule] the backend refused this app's ${this.connection.source === 'token' ? 'SDK token' : 'ingest key'} (${f.reason ?? `HTTP ${f.status}`})` +
+              `${f.detail ? `: ${f.detail}` : ''}. Capture and uploads are off for this page session.`,
+          ),
       });
       await this.remote.loadCached();
     }
@@ -377,6 +419,62 @@ export class Runtime implements BugCapsuleSession {
       this.recorder = new FlightRecorder(launch, this.config.maxEvents ?? 20_000, this.config.windowMs ?? 300_000);
       this.installCapture();
     }
+  }
+
+  /** Notes the first event and Capsule the backend accepted (connection confirmation), without changing results. */
+  private observed(t: BugCapsuleTransport): BugCapsuleTransport {
+    const rt = this;
+    return {
+      fetchConfig: () => t.fetchConfig(),
+      async upload(bytes) {
+        const r = await t.upload(bytes);
+        if (r.status === 'uploaded') rt.firstCapsuleAcceptedAt ??= Date.now();
+        return r;
+      },
+      ...(t.sendEnvelope
+        ? {
+            async sendEnvelope(json: string, options?: { keepalive?: boolean }) {
+              const r = await t.sendEnvelope!(json, options);
+              if (r.status === 'uploaded' && json.includes('"type":"event"')) rt.firstEventAcceptedAt ??= Date.now();
+              return r;
+            },
+          }
+        : {}),
+    };
+  }
+
+  /** Connection and instrumentation, for setup checks and support (`BugCapsule.status()`). */
+  status(): BugCapsuleStatus {
+    const remote = this.remote;
+    const failure = remote?.lastFailure ?? null;
+    const tokenError = this.connection.tokenError;
+    let state: BugCapsuleStatus['connection']['state'];
+    if (tokenError) state = tokenError.error;
+    else if (!this.config.backend && !this.overrides.transport) state = 'not_configured';
+    else if (this.config.enabled === false) state = 'disabled';
+    else if (remote?.rejected) state = 'rejected';
+    else if (remote?.current && !remote.current.enabled) state = 'disabled';
+    else if (remote?.fetchedThisSession) state = 'connected';
+    else if (failure && (failure.status === undefined || failure.status >= 500 || failure.status === 429 || failure.status === 408)) state = 'offline';
+    else state = 'connecting';
+    const networks = this.integrations.filter((i): i is NetworkIntegration => i instanceof NetworkIntegration);
+    const network = networks.some((n) => n.coversFetch || n.coversXhr);
+    const navigation = this.integrations.some((i) => i instanceof HistoryIntegration) || this.frameworks.has('react-router');
+    const appState = this.state.size > 0 || this.integrations.some((i) => i.name === 'local_storage' || i.name === 'session_storage' || i.name === 'indexeddb');
+    const missing = [...(network ? [] : ['network']), ...(navigation ? [] : ['navigation']), ...(appState ? [] : ['app_state'])];
+    return {
+      connection: {
+        state,
+        source: this.connection.source,
+        apiUrl: this.config.backend?.url ?? null,
+        reason: tokenError?.error ?? (state === 'rejected' || state === 'offline' ? (failure?.reason ?? failure?.message ?? null) : null),
+        message: tokenError?.message ?? (state === 'rejected' ? (failure?.detail ?? 'the backend refused the credential') : state === 'offline' ? 'the backend could not be reached; data is kept and retried' : null),
+        configFetchedAt: remote?.fetchedThisSession ?? null,
+        firstEventAcceptedAt: this.firstEventAcceptedAt,
+        firstCapsuleAcceptedAt: this.firstCapsuleAcceptedAt,
+      },
+      instrumentation: { recording: this.recording, network, navigation, appState, frameworks: [...this.frameworks], missing },
+    };
   }
 
   private afterStarted(): void {
@@ -822,8 +920,8 @@ export class Runtime implements BugCapsuleSession {
         app: {
           id: this.config.appId ? cut(this.config.appId, 200) : null,
           name: this.config.appName ? cut(this.config.appName, 200) : null,
-          version: cut(this.config.appVersion, 200),
-          build: cut(this.config.appBuild, 200),
+          version: cut(this.config.appVersion ?? 'unknown', 200),
+          build: cut(this.config.appBuild ?? '0', 200),
           flavor: this.config.flavor ? cut(this.config.flavor, 200) : null,
         },
         source: { gitSha: this.config.gitSha ?? null, dirty: this.config.gitDirty ?? null },

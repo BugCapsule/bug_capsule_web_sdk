@@ -24,8 +24,16 @@ export interface OutboxLimits {
 }
 
 export interface BugCapsuleConfig {
-  appVersion: string;
-  appBuild: string;
+  /**
+   * SDK connection token from the dashboard (`bcsdk.v1.…`): carries the API
+   * URL and an ingest-only credential, so nothing else is needed to connect.
+   * Client-visible by design. Ignored when `backend` is set.
+   */
+  token?: string;
+  /** Default: the version part of `release` (`shop@1.4.0+52` → `1.4.0+52`), else `unknown`. */
+  appVersion?: string;
+  /** Default `0`. */
+  appBuild?: string;
   appId?: string;
   appName?: string;
   flavor?: string;
@@ -33,6 +41,7 @@ export interface BugCapsuleConfig {
   mode?: CaptureMode;
   /** Local master switch. The backend kill switch can also disable capture. */
   enabled?: boolean;
+  /** Explicit backend URL + ingest key (the pre-token setup, still supported). Wins over `token`. */
   backend?: BugCapsuleBackendConfig;
   /** Commit the build was made from (inject at build time, e.g. `import.meta.env.VITE_BUGCAPSULE_GIT_SHA`). */
   gitSha?: string;
@@ -130,6 +139,45 @@ export interface BugCapsuleConfig {
   captureCapsuleWithFeedback?: boolean;
   /** Envelope outbox bounds (default 30 envelopes / 5 MiB / 7 days). */
   envelopeOutboxLimits?: OutboxLimits;
+}
+
+/**
+ * Where the SDK stands with the backend (`BugCapsule.status()`):
+ * - `not_configured`: no token or backend; the app runs without BugCapsule;
+ * - `invalid_token` / `unsupported_token_version`: the token can't be used (see `message`);
+ * - `connecting`: no config fetched yet in this page session;
+ * - `connected`: the config was fetched (basic connectivity);
+ * - `offline`: the backend can't be reached; data waits in the outbox and is retried;
+ * - `rejected`: the backend refused the credential (`reason`: token_revoked, token_expired, token_unknown, …);
+ * - `disabled`: `enabled: false`, or capture switched off by the backend.
+ */
+export type ConnectionState = 'not_configured' | 'invalid_token' | 'unsupported_token_version' | 'connecting' | 'connected' | 'offline' | 'rejected' | 'disabled';
+
+export interface BugCapsuleStatus {
+  connection: {
+    state: ConnectionState;
+    source: 'token' | 'backend' | null;
+    apiUrl: string | null;
+    reason: string | null;
+    message: string | null;
+    /** Epoch ms of the last config fetched (confirmation 1: configuration fetched). */
+    configFetchedAt: number | null;
+    /** Epoch ms the backend first accepted an event / a Capsule in this page session (confirmation 2). */
+    firstEventAcceptedAt: number | null;
+    firstCapsuleAcceptedAt: number | null;
+  };
+  /**
+   * Basic connectivity is not complete replay instrumentation. These are the
+   * progressive setup steps: network fixtures, navigation, app state.
+   */
+  instrumentation: {
+    recording: boolean;
+    network: boolean;
+    navigation: boolean;
+    appState: boolean;
+    frameworks: string[];
+    missing: string[];
+  };
 }
 
 /** What the runtime exposes to integrations. */

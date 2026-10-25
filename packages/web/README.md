@@ -69,7 +69,7 @@ await BugCapsule.init({
   appBuild: '52',
   mode: 'qa',
   gitSha: import.meta.env.VITE_BUGCAPSULE_GIT_SHA,
-  backend: { url: 'https://bugcapsule.example.com', ingestKey: 'bci_…' },
+  token: 'bcsdk.v1.…',                      // SDK token from the BugCapsule dashboard
   integrations: [networkIntegration(), historyIntegration()],
   monitoring: false,                        // Sentry is the monitoring tool
 });
