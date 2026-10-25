@@ -17,9 +17,7 @@ await BugCapsule.init({ token: 'bcsdk.v1.…' });   // SDK token from the BugCap
 renderApp();
 ```
 
-> SDK tokens arrive in the release after `0.4.0-beta.1`. On `0.4.0-beta.1`,
-> pass `backend: { url: 'https://api.bugcapsule.com', ingestKey: 'bci_…' }`
-> instead of `token`.
+> SDK tokens and connection status are available starting with `0.4.0-beta.2`.
 
 **Get started:** [Web SDK guide](https://docs.bugcapsule.com/web.html) ·
 [README with the full setup](https://github.com/BugCapsule/bug_capsule_web_sdk#readme) ·
@@ -46,7 +44,7 @@ Related packages: [`@bugcapsule/react`](https://www.npmjs.com/package/@bugcapsul
 
 If the app already uses Sentry for errors, keep it: Sentry stays the error
 and issue tool, and BugCapsule captures the replayable capsule for the same
-failure. The `sentryCompanion()` integration (since 0.4.0-beta.1)
+failure. The `sentryCompanion()` integration (since 0.4.0-beta.2)
 records each side's id on the other, so one Sentry event maps to one capsule
 by id (never by message or time):
 
