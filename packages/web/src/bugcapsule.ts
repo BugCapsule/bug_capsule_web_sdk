@@ -4,7 +4,7 @@ import { FeedbackWidget, type FeedbackWidgetOptions } from './monitoring/feedbac
 import { Scope } from './monitoring/scope.js';
 import { detachedTransaction, type Span, type SpanOptions, type Transaction, type TransactionOptions } from './monitoring/tracing.js';
 import type { Breadcrumb, CaptureContext, FeedbackInput, SeverityLevel, User } from './monitoring/types.js';
-import type { BugCapsuleConfig, BugCapsuleSession, CaptureResult } from './types.js';
+import type { BugCapsuleConfig, BugCapsuleSession, BugCapsuleStatus, CaptureResult } from './types.js';
 
 let rt: Runtime | null = null;
 let testOverrides: RuntimeOverrides | undefined;
@@ -24,14 +24,22 @@ export interface TrackOptions {
  * Entry point of the BugCapsule web SDK.
  *
  * ```ts
+ * await BugCapsule.init({ token: 'bcsdk.v1.…' }); // from the dashboard: Project settings → Keys → SDK tokens
+ * renderApp();
+ * ```
+ *
+ * The token is all a connection needs. Replay fidelity grows with the
+ * progressive steps (`BugCapsule.status().instrumentation.missing`):
+ *
+ * ```ts
  * await BugCapsule.init({
- *   appVersion: '1.4.0', appBuild: '52', mode: 'qa',
- *   backend: { url: 'https://bugcapsule.example.com', ingestKey: 'bci_…' },
+ *   token: 'bcsdk.v1.…', appVersion: '1.4.0', appBuild: '52', mode: 'qa',
  *   integrations: [networkIntegration(), historyIntegration(), localStorageIntegration({ allowPrefixes: ['cart.'] })],
  *   allowReplay: import.meta.env.DEV,
  * });
- * renderApp();
  * ```
+ *
+ * `backend: { url, ingestKey }` (the setup before tokens) keeps working.
  *
  * Await `init` before rendering: replay restores state there. The SDK never
  * stops the app from starting: if storage or an integration fails, the app
@@ -58,6 +66,15 @@ export const BugCapsule = {
   },
   get session(): BugCapsuleSession | null {
     return rt;
+  },
+
+  /**
+   * Connection (configuration fetched, first event/Capsule accepted, or why
+   * not: invalid/revoked token, offline) and which replay instrumentation is
+   * still missing. Null before `init`.
+   */
+  status(): BugCapsuleStatus | null {
+    return rt?.status() ?? null;
   },
 
   /**

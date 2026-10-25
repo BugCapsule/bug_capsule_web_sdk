@@ -22,7 +22,8 @@ npm install && npm run build
 node examples/shop/api-server.mjs                       # demo API on :4318
 # backend with CORS for the demo origin: CORS_ALLOWED_ORIGINS=http://127.0.0.1:4317
 cd examples/shop
-VITE_BUGCAPSULE_BACKEND_URL=http://127.0.0.1:8787 VITE_BUGCAPSULE_INGEST_KEY=bci_… \
+# the SDK token from the dashboard (or VITE_BUGCAPSULE_BACKEND_URL + VITE_BUGCAPSULE_INGEST_KEY)
+VITE_BUGCAPSULE_TOKEN=bcsdk.v1.… \
 VITE_BUGCAPSULE_ALLOW_REPLAY=true npx vite build && npx vite preview --port 4317 --strictPort --host 127.0.0.1
 ```
 

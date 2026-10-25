@@ -59,7 +59,8 @@ export function parseRemoteConfig(j: Record<string, unknown>, fetchedAtMs?: numb
 
 export type ConfigFetchResult =
   | { ok: true; config: RemoteCaptureConfig }
-  | { ok: false; message: string; status?: number; retryAfterMs?: number };
+  /** `reason`/`detail`: the backend's problem answer (e.g. `token_revoked` and what to do). */
+  | { ok: false; message: string; status?: number; retryAfterMs?: number; reason?: string; detail?: string };
 
 /** How the SDK talks to the backend; tests substitute a fake. */
 export interface BugCapsuleTransport {
@@ -112,7 +113,20 @@ export class BackendTransport implements BugCapsuleTransport {
       });
       const text = await res.text();
       if (res.status !== 200) {
-        return { ok: false, message: `HTTP ${res.status}`, status: res.status, ...opt(retryAfterMs(res)) };
+        let problem: { reason?: unknown; detail?: unknown } = {};
+        try {
+          problem = JSON.parse(text) as typeof problem;
+        } catch {
+          problem = {};
+        }
+        return {
+          ok: false,
+          message: `HTTP ${res.status}`,
+          status: res.status,
+          ...opt(retryAfterMs(res)),
+          ...(typeof problem.reason === 'string' ? { reason: problem.reason } : {}),
+          ...(typeof problem.detail === 'string' ? { detail: problem.detail.slice(0, 500) } : {}),
+        };
       }
       const json: unknown = JSON.parse(text);
       if (typeof json !== 'object' || json === null || Array.isArray(json)) {
@@ -225,6 +239,10 @@ const CACHE_KEY = 'remoteConfig';
 export class RemoteConfigController {
   private currentConfig: RemoteCaptureConfig | null = null;
   private keyRejected = false;
+  /** The last failed fetch (null after a success). */
+  lastFailure: Extract<ConfigFetchResult, { ok: false }> | null = null;
+  /** Epoch ms of the last successful fetch in this page session. */
+  fetchedThisSession: number | null = null;
   private failures = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<void> | null = null;
@@ -243,6 +261,8 @@ export class RemoteConfigController {
       now?: () => number;
       random?: () => number;
       log?: (m: string) => void;
+      /** The backend refused the credential (401/403), once per page session. */
+      onRejected?: (failure: Extract<ConfigFetchResult, { ok: false }>) => void;
     },
   ) {}
 
@@ -267,6 +287,9 @@ export class RemoteConfigController {
   }
   get captureAllowed(): boolean {
     return !this.keyRejected && (this.currentConfig?.enabled ?? true);
+  }
+  get rejected(): boolean {
+    return this.keyRejected;
   }
   get uploadsAllowed(): boolean {
     const age = this.ageMs;
@@ -305,6 +328,8 @@ export class RemoteConfigController {
     if (this.disposed) return;
     if (result.ok) {
       this.failures = 0;
+      this.lastFailure = null;
+      this.fetchedThisSession = this.now;
       const previous = this.currentConfig;
       this.currentConfig = result.config;
       this.keyRejected = false;
@@ -319,9 +344,15 @@ export class RemoteConfigController {
       return;
     }
     this.failures++;
+    this.lastFailure = result;
     if ((result.status === 401 || result.status === 403) && !this.keyRejected) {
       this.keyRejected = true;
       this.opts.log?.(`ingest key rejected (HTTP ${result.status}); capture stopped`);
+      try {
+        this.opts.onRejected?.(result);
+      } catch {
+        // diagnostics never break the SDK
+      }
       const prev = this.currentConfig;
       this.notify(prev, { ...(prev ?? parseRemoteConfig({})), enabled: false, captureNetworkBodies: false });
     }
