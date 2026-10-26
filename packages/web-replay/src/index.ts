@@ -105,7 +105,8 @@ async function deliver(replayUrl: string, report: ReplayReport, log: (l: string)
  * Runs one replay attempt: loads the capsule and settings from the CLI,
  * opens the app in a fresh Chromium context sized like the recording,
  * restores allowlisted storage before any page script runs, blocks requests
- * to origins other than the app's (reported as `network.escaped`), lets the
+ * to origins other than the app's (reported as `network.escaped`) and real
+ * WebSockets when the capsule records them (`dependency.live`), lets the
  * in-page engine (the app's own `@bugcapsule/web` with `allowReplay: true`)
  * replay inputs and serve recorded responses, and posts its report.
  */
@@ -165,6 +166,15 @@ export async function runReplayAttempt(options: ReplayAttemptOptions): Promise<R
       if (escaped.length < 100) escaped.push({ type: 'network.escaped', detail: `${route.request().method()} ${url.split('?')[0]}` });
       await route.abort('blockedbyclient');
     });
+
+    // capsule-v2: the app's SDK serves recorded WebSockets in the page. A socket that still reaches the
+    // network (a worker, a WebSocket reference taken before BugCapsule.init) escaped it: block and report it.
+    if ((capsule.manifest.dependencies ?? []).some((d) => d.kind === 'websocket' && d.required)) {
+      await context.routeWebSocket(/.*/, (ws) => {
+        if (escaped.length < 100) escaped.push({ type: 'dependency.live', detail: `WebSocket ${ws.url().split('?')[0]} reached the network` });
+        ws.close({ code: 1008, reason: 'blocked by the BugCapsule replay runner' }).catch(() => {});
+      });
+    }
 
     const storage = {
       local: (capsule.checkpoint.data.local_storage ?? null) as Record<string, string> | null,

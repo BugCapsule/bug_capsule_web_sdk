@@ -5,7 +5,7 @@
  */
 export { BugCapsule, type TrackOptions } from './bugcapsule.js';
 export { parseConnectionToken, type ConnectionTokenError, type ParsedConnectionToken } from './connection-token.js';
-export type { CapsuleLinks, SentryLink } from './core/model.js';
+export type { CapsuleDependency, CapsuleLinks, DependencyGap, SentryLink } from './core/model.js';
 export type {
   BugCapsuleBackendConfig,
   BugCapsuleConfig,
@@ -15,11 +15,23 @@ export type {
   CaptureResult,
   ConnectionState,
   OutboxLimits,
+  ReplayAdapter,
   ReplayContext,
   UploadResult,
   UploadStatus,
 } from './types.js';
 export { networkIntegration, fetchIntegration, xhrIntegration, NetworkIntegration, type NetworkOptions } from './integrations/network.js';
+export {
+  webSocketIntegration,
+  WebSocketIntegration,
+  rawBinarySerializer,
+  WEBSOCKET_ADAPTER_ID,
+  WEBSOCKET_ADAPTER_SCHEMA,
+  WEBSOCKET_TESTED_BROWSERS,
+  type WebSocketOptions,
+  type WebSocketBinarySerializer,
+  type WebSocketFrameInfo,
+} from './integrations/websocket.js';
 export {
   localStorageIntegration,
   sessionStorageIntegration,

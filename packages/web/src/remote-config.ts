@@ -21,6 +21,11 @@ export interface RemoteCaptureConfig {
   maxBreadcrumbs: number;
   /** When set, replaces the app's `tracePropagationTargets`. */
   tracePropagationTargets: string[] | null;
+  /**
+   * capsule-v2 §7: interaction adapters switched off (e.g.
+   * `bugcapsule-web.websocket`); HTTP and other capture continue.
+   */
+  disabledAdapters: string[];
 }
 
 /** Parses `/v1/sdk/config` (or the cache); throws on wrong types, clamps values. */
@@ -40,6 +45,7 @@ export function parseRemoteConfig(j: Record<string, unknown>, fetchedAtMs?: numb
   const traces = field<number>('tracesSampleRate', 'number');
   const breadcrumbs = field<number>('maxBreadcrumbs', 'number') ?? 100;
   const targets = field<unknown[]>('tracePropagationTargets', 'array');
+  const disabledAdapters = field<unknown[]>('disabledAdapters', 'array');
   return {
     enabled: field<boolean>('enabled', 'boolean') ?? true,
     sampleRate: Number.isNaN(rate) ? 0 : Math.min(1, Math.max(0, rate)),
@@ -54,6 +60,7 @@ export function parseRemoteConfig(j: Record<string, unknown>, fetchedAtMs?: numb
     sessionTracking: field<boolean>('sessionTracking', 'boolean') ?? true,
     maxBreadcrumbs: Number.isNaN(breadcrumbs) ? 0 : Math.min(100, Math.max(0, Math.floor(breadcrumbs))),
     tracePropagationTargets: targets === undefined ? null : targets.map(String),
+    disabledAdapters: disabledAdapters === undefined ? [] : disabledAdapters.map(String),
   };
 }
 
