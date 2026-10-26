@@ -1,5 +1,5 @@
 import { countJsonValues, utf8Decode, utf8Encode } from './json.js';
-import { CAPSULE_FORMAT, SPEC_VERSION, type Capsule } from './model.js';
+import { CAPSULE_FORMAT, SPEC_VERSION, specVersionFor, type Capsule, type Manifest } from './model.js';
 import { CapsuleLimits, validateCapsuleDocument } from './validator.js';
 
 export class CapsuleFormatError extends Error {
@@ -69,10 +69,11 @@ export const streamGzip: GzipCodec = {
   },
 };
 
+/** The document a writer emits: spec v2 only when the capsule has interaction dependencies, else v1. */
 export function capsuleToJson(capsule: Capsule): Capsule {
   return {
     format: CAPSULE_FORMAT,
-    specVersion: SPEC_VERSION,
+    specVersion: specVersionFor(capsule.manifest),
     manifest: capsule.manifest,
     checkpoint: capsule.checkpoint,
     events: capsule.events,
@@ -84,8 +85,9 @@ export async function encodeCapsule(capsule: Capsule, codec: GzipCodec = streamG
 }
 
 /**
- * Decodes a `.bugcapsule`: gzip magic, bounded inflate, JSON value count
- * before parsing, format/specVersion, then full structural validation.
+ * Decodes a `.bugcapsule` (spec v1 or v2): gzip magic, bounded inflate,
+ * JSON value count before parsing, format/specVersion (newer than v2 is
+ * rejected), then full structural validation.
  * Every problem is a {@link CapsuleFormatError} naming the JSON path.
  */
 export async function decodeCapsule(
@@ -130,10 +132,16 @@ export function capsuleFromJson(json: unknown): Capsule {
   const problem = validateCapsuleDocument(doc);
   if (problem !== null) throw new CapsuleFormatError(`malformed capsule: ${problem}`);
   const checkpoint = doc.checkpoint as Record<string, unknown>;
+  let manifest = doc.manifest as Manifest;
+  if (version < 2 && 'dependencies' in manifest) {
+    // capsule-v2 §1: dependencies have no effect on a v1 capsule.
+    const { dependencies: _ignored, ...rest } = manifest;
+    manifest = rest as Manifest;
+  }
   return {
     format: CAPSULE_FORMAT,
     specVersion: version,
-    manifest: doc.manifest as Capsule['manifest'],
+    manifest,
     checkpoint: {
       ...(checkpoint as unknown as Capsule['checkpoint']),
       afterSeq: (checkpoint.afterSeq as number | undefined) ?? 0,
