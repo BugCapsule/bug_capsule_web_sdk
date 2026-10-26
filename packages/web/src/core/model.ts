@@ -1,7 +1,8 @@
-/** Capsule format v1 (spec capsule-v1 + runtimes-v1). */
+/** Capsule format v1 and v2 (spec capsule-v1, capsule-v2 + runtimes-v1). */
 
 export const CAPSULE_FORMAT = 'bugcapsule.capsule';
-export const SPEC_VERSION = 1;
+/** Newest spec version this reader implements (it reads v1 and v2). */
+export const SPEC_VERSION = 2;
 
 export type CaptureMode = 'debug' | 'qa' | 'production';
 export type CheckpointKind = 'launch' | 'periodic';
@@ -73,6 +74,36 @@ export interface CapsuleLinks {
   [k: string]: unknown;
 }
 
+/** `manifest.dependencies[].gaps[]` (capsule-v2 §7). */
+export interface DependencyGap {
+  code: string;
+  count?: number;
+  detail?: string;
+}
+
+export type DependencyCoverage = 'complete' | 'partial' | 'diagnostic';
+
+/** One entry of `manifest.dependencies` (capsule-v2 §2): an interaction source replay needs. */
+export interface CapsuleDependency {
+  /** Unique in the capsule; interaction events name it in `data.dep`. */
+  id: string;
+  /** `websocket` | `platform.channel` | `native` (other values: a kind this reader does not know). */
+  kind: string;
+  /** Adapter identity, e.g. `bugcapsule-web.websocket`. */
+  adapter: string;
+  adapterVersion: string;
+  /** Version of this adapter's event payloads. */
+  schema: number;
+  /** `true`: replay cannot be faithful without this adapter (preflight blocks). */
+  required: boolean;
+  coverage: DependencyCoverage;
+  operations?: string[];
+  tested?: { package: string; version: string }[];
+  gaps?: DependencyGap[];
+  stats?: { events?: number; payloadBytes?: number; dropped?: number; truncated?: number };
+  [k: string]: unknown;
+}
+
 export interface Manifest {
   capsuleId: string;
   createdAt: string;
@@ -99,6 +130,8 @@ export interface Manifest {
   runtime?: RuntimeInfo;
   capabilities?: Record<string, string>;
   links?: CapsuleLinks;
+  /** Interaction dependencies (capsule-v2 §2). A capsule with any is written as spec v2. */
+  dependencies?: CapsuleDependency[];
   [k: string]: unknown;
 }
 
@@ -108,6 +141,20 @@ export interface Capsule {
   manifest: Manifest;
   checkpoint: Checkpoint;
   events: CapsuleEvent[];
+}
+
+/**
+ * The spec version a writer uses for `manifest` (capsule-v2 §1): 2 when the
+ * capsule has interaction dependencies, else 1, so v1-only sessions stay
+ * readable by v1 tools.
+ */
+export function specVersionFor(manifest: Manifest): 1 | 2 {
+  return manifest.dependencies && manifest.dependencies.length > 0 ? 2 : 1;
+}
+
+/** Dependencies replay must serve; preflight blocks when an adapter for one is missing. */
+export function requiredDependencies(manifest: Manifest): CapsuleDependency[] {
+  return (manifest.dependencies ?? []).filter((d) => d.required);
 }
 
 /** The runtime of a capsule without `manifest.runtime` (spec runtimes-v1 §1). */

@@ -1,6 +1,6 @@
 /**
  * Structural validation of a decoded capsule document (spec capsule-v1
- * "Validation" + runtimes-v1 §2). Same rules and messages as the Dart reader
+ * "Validation", capsule-v2 §9 + runtimes-v1 §2). Same rules and messages as the Dart reader
  * (`capsule_validator.dart`) and the backend (`src/capsule.ts`); the shared
  * fixtures hold all three to it.
  */
@@ -13,6 +13,9 @@ export const CapsuleLimits = Object.freeze({
   maxRedactionKeys: 500,
   maxCapabilities: 200,
   maxFrameworks: 20,
+  maxDependencies: 100,
+  maxDependencyItems: 100,
+  maxTested: 20,
   maxJsonValues: 4_000_000,
 });
 
@@ -120,7 +123,11 @@ function checkDepth(root: unknown): void {
   }
 }
 
-/** Null when `doc` is a valid v1 document, otherwise `<json path> <reason>`. */
+/**
+ * Null when `doc` is a valid v1 or v2 document, otherwise `<json path>
+ * <reason>`. Does not check `specVersion` against the reader's version (the
+ * codec does that, with its own message).
+ */
 export function validateCapsuleDocument(doc: unknown): string | null {
   try {
     validate(doc);
@@ -135,7 +142,7 @@ function validate(root: unknown): void {
   const doc = object(root, '$');
   checkDepth(doc);
   if (doc.format !== 'bugcapsule.capsule') fail('$.format', 'must be "bugcapsule.capsule"');
-  int(doc, 'specVersion', '$', 1);
+  const specVersion = int(doc, 'specVersion', '$', 1);
 
   const mp = '$.manifest';
   const m = object(doc.manifest, mp);
@@ -264,13 +271,17 @@ function validate(root: unknown): void {
     }
   }
 
+  // capsule-v2 §2: interaction dependencies (ignored in v1 documents).
+  const dependencies = specVersion >= 2 ? validateDependencies(m.dependencies, `${mp}.dependencies`) : null;
+
   const cp = '$.checkpoint';
   const checkpoint = object(doc.checkpoint, cp);
   oneOf(checkpoint, 'kind', cp, ['launch', 'periodic']);
   int(checkpoint, 't', cp);
   int(checkpoint, 'wallClockMs', cp);
   optInt(checkpoint, 'afterSeq', cp, 0);
-  optObject(checkpoint, 'data', cp);
+  const checkpointData = optObject(checkpoint, 'data', cp);
+  if (dependencies && checkpointData) validateOpenInteractions(checkpointData, `${cp}.data`);
 
   const events = array(doc.events, '$.events', CapsuleLimits.maxEvents);
   let lastSeq: number | null = null;
@@ -284,6 +295,7 @@ function validate(root: unknown): void {
     const type = string(e, 'type', path, 100);
     const data = optObject(e, 'data', path) ?? {};
     validateEventData(type, data, `${path}.data`);
+    if (dependencies) validateInteraction(type, data, `${path}.data`, dependencies);
   });
 }
 
@@ -330,6 +342,136 @@ function validateEventData(type: string, d: Obj, path: string): void {
       break;
     case 'lifecycle':
       string(d, 'state', path, 20);
+      break;
+  }
+}
+
+function validateDependencies(value: unknown, path: string): Set<string> {
+  const list = array(value, path, CapsuleLimits.maxDependencies);
+  const ids = new Set<string>();
+  list.forEach((entry, i) => {
+    const p = `${path}[${i}]`;
+    const d = object(entry, p);
+    const id = string(d, 'id', p, 100);
+    if (ids.has(id)) fail(`${p}.id`, 'must be unique');
+    ids.add(id);
+    string(d, 'kind', p, 50);
+    string(d, 'adapter', p, 200);
+    string(d, 'adapterVersion', p, 100);
+    int(d, 'schema', p, 1);
+    if (typeof d.required !== 'boolean') fail(`${p}.required`, 'must be a boolean');
+    oneOf(d, 'coverage', p, ['complete', 'partial', 'diagnostic']);
+    if (d.operations !== undefined && d.operations !== null) {
+      array(d.operations, `${p}.operations`, CapsuleLimits.maxDependencyItems).forEach((v, j) => {
+        if (typeof v !== 'string' || v.length === 0 || v.length > 200) fail(`${p}.operations[${j}]`, 'must be a non-empty string');
+      });
+    }
+    if (d.tested !== undefined && d.tested !== null) {
+      array(d.tested, `${p}.tested`, CapsuleLimits.maxTested).forEach((v, j) => {
+        const t = object(v, `${p}.tested[${j}]`);
+        string(t, 'package', `${p}.tested[${j}]`, 200);
+        string(t, 'version', `${p}.tested[${j}]`, 100);
+      });
+    }
+    if (d.gaps !== undefined && d.gaps !== null) {
+      array(d.gaps, `${p}.gaps`, CapsuleLimits.maxDependencyItems).forEach((v, j) => {
+        const g = object(v, `${p}.gaps[${j}]`);
+        string(g, 'code', `${p}.gaps[${j}]`, 100);
+        optInt(g, 'count', `${p}.gaps[${j}]`, 0);
+        optString(g, 'detail', `${p}.gaps[${j}]`, 2000);
+      });
+    }
+    const stats = optObject(d, 'stats', p);
+    if (stats) for (const k of ['events', 'payloadBytes', 'dropped', 'truncated']) optInt(stats, k, `${p}.stats`, 0);
+  });
+  return ids;
+}
+
+function validateOpenInteractions(data: Obj, path: string): void {
+  const interactions = optObject(data, 'interactions', path);
+  if (!interactions || interactions.open === undefined || interactions.open === null) return;
+  array(interactions.open, `${path}.interactions.open`, CapsuleLimits.maxDependencyItems * 10).forEach((entry, i) => {
+    const p = `${path}.interactions.open[${i}]`;
+    const o = object(entry, p);
+    string(o, 'dep', p, 100);
+    string(o, 'type', p, 50);
+    string(o, 'id', p, 200);
+    optBool(o, 'restorable', p);
+  });
+}
+
+const PAYLOAD_MODES = ['full', 'redacted', 'metadata', 'omitted', 'truncated'] as const;
+
+function payload(d: Obj, key: string, path: string): void {
+  const v = d[key];
+  if (v === undefined || v === null) return;
+  const p = object(v, `${path}.${key}`);
+  oneOf(p, 'mode', `${path}.${key}`, PAYLOAD_MODES);
+  if (typeof p.replayable !== 'boolean') fail(`${path}.${key}.replayable`, 'must be a boolean');
+  optInt(p, 'bytes', `${path}.${key}`, 0);
+  optString(p, 'kind', `${path}.${key}`, 20);
+}
+
+/** capsule-v2 §9: the fields replay reads from interaction events. */
+function validateInteraction(type: string, d: Obj, path: string, dependencies: Set<string>): void {
+  if (!type.startsWith('ws.') && !type.startsWith('platform.') && !type.startsWith('native.')) return;
+  const dep = string(d, 'dep', path, 100);
+  if (!dependencies.has(dep)) fail(`${path}.dep`, 'must name a declared dependency');
+  for (const field of ['payload', 'args', 'value', 'details']) payload(d, field, path);
+  const keyed = () => {
+    string(d, 'key', path, 10_000);
+    int(d, 'occurrence', path, 0);
+  };
+  if (type.startsWith('ws.')) string(d, 'conn', path, 200);
+  switch (type) {
+    case 'ws.connect':
+      keyed();
+      break;
+    case 'ws.send':
+    case 'ws.message':
+      int(d, 'index', path, 0);
+      break;
+    case 'ws.close':
+      oneOf(d, 'initiator', path, ['client', 'server', 'unknown']);
+      optInt(d, 'code', path);
+      break;
+    case 'platform.call':
+      string(d, 'channel', path, 1000);
+      string(d, 'call', path, 200);
+      oneOf(d, 'dir', path, ['dart', 'platform']);
+      keyed();
+      break;
+    case 'platform.result':
+    case 'platform.error':
+      string(d, 'channel', path, 1000);
+      string(d, 'call', path, 200);
+      break;
+    case 'platform.listen':
+      string(d, 'channel', path, 1000);
+      string(d, 'sub', path, 200);
+      keyed();
+      break;
+    case 'platform.event':
+    case 'platform.cancel':
+    case 'platform.done':
+      string(d, 'channel', path, 1000);
+      string(d, 'sub', path, 200);
+      break;
+    case 'native.call':
+      string(d, 'op', path, 200);
+      keyed();
+      break;
+    case 'native.result':
+      string(d, 'op', path, 200);
+      break;
+    case 'native.subscribe':
+      string(d, 'sub', path, 200);
+      keyed();
+      break;
+    case 'native.event':
+    case 'native.cancel':
+    case 'native.done':
+      string(d, 'sub', path, 200);
       break;
   }
 }

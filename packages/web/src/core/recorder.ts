@@ -61,14 +61,14 @@ export class FlightRecorder {
     this.prune();
   }
 
-  /** Rewrites retained events and checkpoints in place (seq and t kept; null drops). */
-  rewrite(opts: { event?: (e: CapsuleEvent) => CapsuleEvent | null; checkpoint?: (c: Checkpoint) => Checkpoint }): void {
+  /** Rewrites retained events and checkpoints in place (seq and t kept; null drops, counted in {@link rewriteDropped} unless `countDropped: false`). */
+  rewrite(opts: { event?: (e: CapsuleEvent) => CapsuleEvent | null; checkpoint?: (c: Checkpoint) => Checkpoint; countDropped?: boolean }): void {
     if (opts.event) {
       const updated: CapsuleEvent[] = [];
       for (const e of this.live()) {
         const r = opts.event(e);
-        if (r === null) this.rewriteDropped++;
-        else updated.push(r);
+        if (r !== null) updated.push(r);
+        else if (opts.countDropped !== false) this.rewriteDropped++;
       }
       this.events = updated;
       this.head = 0;

@@ -1,4 +1,5 @@
-import type { Capsule, CaptureMode, CheckpointKind, EligibilityBuilder, FailureRecord } from './core/model.js';
+import type { InteractionScript } from './core/interactions.js';
+import type { Capsule, CapsuleDependency, CapsuleEvent, CaptureMode, CheckpointKind, EligibilityBuilder, FailureRecord } from './core/model.js';
 import type { FixtureStore } from './core/network.js';
 import type { ReplaySettings } from './core/protocol.js';
 import type { RecordedWindow } from './core/recorder.js';
@@ -202,6 +203,12 @@ export interface BugCapsuleSession {
   readonly nativeFetch: typeof fetch;
   /** @internal Monitoring hooks (null when monitoring is off and during replay). */
   readonly monitor?: MonitorHooks | null;
+  /**
+   * Whether the backend switched off this interaction adapter
+   * (`disabledAdapters` in the remote config, capsule-v2 §7). Other capture
+   * (HTTP, input) is unaffected.
+   */
+  adapterDisabled?(adapterId: string): boolean;
 }
 
 export interface ReplayContext {
@@ -215,6 +222,22 @@ export interface ReplayContext {
   activity(): void;
   /** True once the first recorded input was dispatched (late restoration detection). */
   readonly inputsStarted: boolean;
+  /**
+   * Recorded interactions of the capsule's required dependencies
+   * (capsule-v2 §5) on the replay clock. Adapters match outbound operations
+   * and bind handlers for inbound deliveries here.
+   */
+  readonly interactions: InteractionScript;
+  /** Call after `take`/`takeNext`/`bind`: reschedules the next delivery. */
+  interactionsChanged(): void;
+}
+
+/** An interaction adapter an integration provides for replay (capsule-v2 §2 preflight). */
+export interface ReplayAdapter {
+  /** `manifest.dependencies[].adapter`, e.g. `bugcapsule-web.websocket`. */
+  adapter: string;
+  /** Event payload schemas this adapter can replay. */
+  schemas: readonly number[];
 }
 
 /**
@@ -234,6 +257,17 @@ export interface BugCapsuleIntegration {
   describeEligibility?(eligibility: EligibilityBuilder, window: RecordedWindow): void;
   /** Called when capture or replay stops for good (tests, kill switch). */
   dispose?(): void;
+
+  // ------------------------------------------- interaction adapters (capsule-v2)
+
+  /** Interaction adapters this integration replays; preflight blocks capsules needing others. */
+  readonly replayAdapters?: readonly ReplayAdapter[];
+  /** `manifest.dependencies` entries for what this integration recorded in the window (none: v1 capsule). */
+  describeDependencies?(window: RecordedWindow): CapsuleDependency[];
+  /** Connections or subscriptions open now, listed in periodic checkpoints (`checkpoint.data.interactions.open`). */
+  openInteractions?(): { dep: string; type: string; id: string; restorable: boolean }[];
+  /** Whether a buffered event belongs to this integration's adapter (dropped when the adapter is disabled remotely). */
+  ownsEvent?(event: CapsuleEvent): boolean;
 }
 
 export interface CaptureResult {

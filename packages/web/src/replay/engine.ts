@@ -1,7 +1,8 @@
 import { IdleCompressor } from '../core/idle.js';
+import { InteractionScript } from '../core/interactions.js';
 import { Redactor } from '../core/redaction.js';
 import { FixtureStore } from '../core/network.js';
-import type { Capsule, CapsuleEvent, FailureRecord } from '../core/model.js';
+import { requiredDependencies, type Capsule, type CapsuleEvent, type FailureRecord } from '../core/model.js';
 import type { Divergence, ReplayReport, ReplaySettings, ReplayStrategy } from '../core/protocol.js';
 import type { ReplayContext } from '../types.js';
 import type { ActionRegistry } from '../actions.js';
@@ -38,10 +39,16 @@ const now = () => performance.now();
  * recorded input at recorded times relative to the checkpoint, watches for
  * the original failure, and builds the {@link ReplayReport}. Long idle gaps
  * between inputs are skipped when both the recording and the page are idle.
+ *
+ * Recorded interactions (capsule-v2: WebSockets) are scheduled on the same
+ * clock: a delivery that is due is never skipped past, and an open but idle
+ * connection does not keep replay busy.
  */
 export class ReplayEngine implements ReplayContext {
   readonly fixtures: FixtureStore;
+  readonly interactions: InteractionScript;
   private readonly idle: IdleCompressor;
+  private pumpTimer: ReturnType<typeof setTimeout> | null = null;
   private started: number | null = null;
   private readonly restoredAt = now();
   private readonly divergences: Divergence[] = [];
@@ -69,6 +76,58 @@ export class ReplayEngine implements ReplayContext {
   ) {
     this.fixtures = new FixtureStore(capsule.events);
     this.idle = new IdleCompressor(capsule.events);
+    // Preflight (Runtime.startReplay) made sure an adapter serves every required dependency.
+    this.interactions = new InteractionScript(capsule.events, {
+      dependencies: new Set(requiredDependencies(capsule.manifest).map((d) => d.id)),
+      clock: () => this.interactionClock(),
+      base: capsule.checkpoint.kind === 'launch' ? 0 : capsule.checkpoint.t,
+    });
+  }
+
+  /**
+   * Replay clock of interaction deliveries: page time since restore plus
+   * skipped idle time. The page-time part holds still for the rest of the
+   * current task, so operations the app starts together (two sockets opened
+   * in one function) get the same time, as their recorded twins did.
+   */
+  private interactionClock(): number {
+    if (this.taskTime === null) {
+      this.taskTime = now() - this.restoredAt;
+      queueMicrotask(() => (this.taskTime = null));
+    }
+    return this.taskTime + this.skippedMs;
+  }
+
+  private taskTime: number | null = null;
+
+  /** Delivers due interactions and arms a timer for the next one (call after take/takeNext/bind). */
+  interactionsChanged(): void {
+    if (this.pumpTimer !== null) clearTimeout(this.pumpTimer);
+    this.pumpTimer = null;
+    const next = this.interactions.nextDueAt;
+    if (next === null) return;
+    this.pumpTimer = setTimeout(() => {
+      this.pumpTimer = null;
+      this.pumpInteractions();
+    }, Math.max(0, next - this.interactionClock()));
+  }
+
+  private pumpInteractions(): void {
+    let delivered = 0;
+    try {
+      delivered = this.interactions.pump();
+    } catch (e) {
+      this.diverge('dispatch.error', `interaction delivery: ${String(e)}`);
+    }
+    for (const [type, detail] of this.interactions.takeDivergences()) this.diverge(type, detail);
+    if (delivered > 0) this.activity();
+    this.interactionsChanged();
+  }
+
+  /** Ms until the next interaction delivery is due (null: none scheduled). */
+  private interactionDueIn(): number | null {
+    const next = this.interactions.nextDueAt;
+    return next === null ? null : next - this.interactionClock();
   }
 
   get inputsStarted(): boolean {
@@ -187,6 +246,8 @@ export class ReplayEngine implements ReplayContext {
     const expected = this.capsule.manifest.failure ?? null;
     const base = this.capsule.checkpoint.kind === 'launch' ? 0 : this.capsule.checkpoint.t;
     const toDispatch = this.capsule.events.filter((e) => this.shouldDispatch(e.type) && e.t >= base);
+    this.interactions.runStarted(this.interactionClock());
+    this.interactionsChanged();
 
     let lastT = 0;
     let previous = base;
@@ -196,13 +257,22 @@ export class ReplayEngine implements ReplayContext {
       lastT = due;
       const idleSince = this.settings.idleCompression ? this.idle.idleSince(previous, event.t) : null;
       previous = event.t;
+      let compressed = false;
       while (!this.reproduced) {
         const wait = due - this.elapsed();
         if (wait <= 0) break;
         if (idleSince !== null && this.idle.maySkip(this.elapsed() + base, idleSince, this.busy, this.quietMs)) {
-          this.skippedMs += wait;
-          this.gapsCompressed++;
-          break;
+          // Never jump past a due interaction delivery: skip up to it, deliver, then continue.
+          const dueIn = this.interactionDueIn();
+          const jump = dueIn === null ? wait : Math.min(wait, Math.max(0, dueIn));
+          if (jump > 0) {
+            if (!compressed) this.gapsCompressed++;
+            compressed = true;
+            this.skippedMs += jump;
+          }
+          if (jump >= wait) break;
+          this.pumpInteractions();
+          continue;
         }
         await this.sleep(idleSince === null || wait < 50 ? wait : 50);
       }
@@ -224,6 +294,8 @@ export class ReplayEngine implements ReplayContext {
       // reporting hooks must not lose the report
     }
     for (const key of this.fixtures.unusedKeys()) this.diverge('network.unused', key);
+    for (const [type, detail] of this.interactions.takeDivergences()) this.diverge(type, detail);
+    for (const [type, detail] of this.interactions.unused(expected?.t ?? null)) this.diverge(type, detail);
 
     const outcome = !expected ? 'no_assertion' : this.reproduced ? 'reproduced' : 'not_reproduced';
     return {

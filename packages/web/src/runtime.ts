@@ -2,7 +2,20 @@ import { ActionRegistry } from './actions.js';
 import { capsuleFromJson, capsuleToJson, CapsuleFormatError, encodeCapsule } from './core/codec.js';
 import { cut } from './core/json.js';
 import { assertionFailure, exceptionFailure, shiftFailure } from './core/failure.js';
-import { EligibilityBuilder, runtimeOf, type Capsule, type CapsuleEvent, type Checkpoint, type CheckpointKind, type FailureRecord, type SentryLink } from './core/model.js';
+import { isInteraction } from './core/interactions.js';
+import {
+  EligibilityBuilder,
+  requiredDependencies,
+  runtimeOf,
+  specVersionFor,
+  type Capsule,
+  type CapsuleDependency,
+  type CapsuleEvent,
+  type Checkpoint,
+  type CheckpointKind,
+  type FailureRecord,
+  type SentryLink,
+} from './core/model.js';
 import { replaySettingsFromJson, type ReplayReport, type ReplaySettings } from './core/protocol.js';
 import { FlightRecorder } from './core/recorder.js';
 import { Redactor } from './core/redaction.js';
@@ -19,8 +32,10 @@ import { saveCapture, UploadOutbox } from './storage/outbox.js';
 import { parseConnectionToken, type ConnectionTokenError } from './connection-token.js';
 import type { BugCapsuleConfig, BugCapsuleIntegration, BugCapsuleSession, BugCapsuleStatus, CaptureResult, ReplayContext, UploadResult } from './types.js';
 
-export const SDK_NAME = '@bugcapsule/web';
-export const SDK_VERSION = '0.4.0-beta.2';
+import { SDK_NAME, SDK_VERSION } from './version.js';
+import { WebSocketIntegration, WEBSOCKET_ADAPTER_ID } from './integrations/websocket.js';
+
+export { SDK_NAME, SDK_VERSION };
 
 /**
  * What happened to a failure's capsule (the Sentry companion reports it as
@@ -252,9 +267,22 @@ export class Runtime implements BugCapsuleSession {
     return this.engine ? null : this.monitorClient;
   }
 
+  /**
+   * Session clock (ms since the SDK started). It holds still for the rest of
+   * the current task: events recorded in one event-loop turn (a message and
+   * the send it triggers, several frames delivered together) share a
+   * timestamp, so replay orders them by their recorded order instead of by
+   * sub-millisecond rounding.
+   */
   now(): number {
-    return Math.round(perfNow() - this.start0);
+    if (this.taskNow === null) {
+      this.taskNow = Math.round(perfNow() - this.start0);
+      queueMicrotask(() => (this.taskNow = null));
+    }
+    return this.taskNow;
   }
+
+  private taskNow: number | null = null;
 
   /** Wall clock (epoch ms): the recorded clock during replay. */
   wallClock(): number {
@@ -302,6 +330,10 @@ export class Runtime implements BugCapsuleSession {
           if (out.requestEncoding === 'base64') out.requestBody = data.requestBody;
         }
         if (type === 'failure' && typeof data.signature === 'string') out.signature = data.signature;
+        if (isInteraction(type)) {
+          // Adapters redact payloads and keys themselves (capsule-v2 §3); a second pass could alter bytes or the match key.
+          for (const k of ['key', 'payload', 'args', 'value', 'details']) if (k in data) out[k] = data[k];
+        }
       }
       const before = this.config.beforeRecord;
       return before && hook ? before(type, out) : out;
@@ -309,6 +341,11 @@ export class Runtime implements BugCapsuleSession {
       this.warnOnce(`dropping a ${type} event: sanitizer failed (${String(e)})`);
       return null;
     }
+  }
+
+  /** capsule-v2 §7: the backend can switch off one interaction adapter (`disabledAdapters`) without touching HTTP capture. */
+  adapterDisabled(adapterId: string): boolean {
+    return !this.engine && (this.remote?.current?.disabledAdapters.includes(adapterId) ?? false);
   }
 
   reportError(error: unknown, context: CaptureContext = {}): void {
@@ -706,6 +743,17 @@ export class Runtime implements BugCapsuleSession {
         this.warnOnce(`${integration.name} snapshot failed: ${String(e)}`);
       }
     }
+    if (kind === 'periodic') {
+      // capsule-v2 §6: connections open at a periodic checkpoint (never restorable on the web).
+      const open = this.integrations.flatMap((i) => {
+        try {
+          return i.openInteractions?.() ?? [];
+        } catch {
+          return [];
+        }
+      });
+      if (open.length > 0) data.interactions = { open };
+    }
     return data;
   }
 
@@ -897,6 +945,15 @@ export class Runtime implements BugCapsuleSession {
       }
     }
 
+    const dependencies: CapsuleDependency[] = [];
+    for (const integration of this.integrations) {
+      try {
+        dependencies.push(...(integration.describeDependencies?.(window) ?? []));
+      } catch (e) {
+        eligibility.missing(`integration.${integration.name}`, `dependency description failed: ${String(e)}`);
+      }
+    }
+
     const events: CapsuleEvent[] = window.events.map((e) => ({ ...e, t: e.t - anchor }));
     const capabilities: Record<string, string> = {
       'input.pointer.capture': this.config.capturePointers === false ? 'unsupported' : 'supported',
@@ -912,7 +969,7 @@ export class Runtime implements BugCapsuleSession {
     const nav = globalThis.navigator;
     const capsule: Capsule = {
       format: 'bugcapsule.capsule',
-      specVersion: 1,
+      specVersion: dependencies.length > 0 ? 2 : 1,
       manifest: {
         capsuleId,
         createdAt: new Date().toISOString(),
@@ -957,6 +1014,7 @@ export class Runtime implements BugCapsuleSession {
         capabilities,
         ...(link ? { monitoring: { ...link } } : {}),
         ...(sentry ? { links: { sentry: { ...sentry } } } : {}),
+        ...(dependencies.length > 0 ? { dependencies } : {}),
       },
       checkpoint: { ...window.checkpoint, t: window.checkpoint.t - anchor },
       events,
@@ -1038,12 +1096,18 @@ export class Runtime implements BugCapsuleSession {
 
   // ---------------------------------------------------------- remote config
 
-  private applyRemote(_previous: RemoteCaptureConfig | null, next: RemoteCaptureConfig): void {
+  private applyRemote(previous: RemoteCaptureConfig | null, next: RemoteCaptureConfig): void {
     this.monitorClient?.applyRemote(next);
     this.maxCapsuleBytes = next.maxCapsuleBytes;
     if (!next.enabled) {
       this.disableCapture();
       return;
+    }
+    const newlyDisabled = next.disabledAdapters.filter((id) => !(previous?.disabledAdapters ?? []).includes(id));
+    if (newlyDisabled.length > 0) {
+      // Drop what a switched-off adapter buffered; other capture is untouched.
+      const owners = this.integrations.filter((i) => i.ownsEvent && i.replayAdapters?.some((a) => newlyDisabled.includes(a.adapter)));
+      if (owners.length > 0) this.recorder?.rewrite({ event: (e) => (owners.some((i) => i.ownsEvent!(e)) ? null : e), countDropped: false });
     }
     if (this.mode === 'production' && this.recording) {
       const rate = this.effectiveRate(next);
@@ -1144,6 +1208,12 @@ export class Runtime implements BugCapsuleSession {
       return;
     }
 
+    const blocked = this.preflight(capsule);
+    if (blocked !== null) {
+      await bridge.report({ ...errorReport('incompatible', blocked, settings), expectedSignature: capsule.manifest.failure?.signature ?? null });
+      return;
+    }
+
     const engine = (this.engine = new ReplayEngine(capsule, settings, this.actions, bridge, this.config.gitSha ?? null));
     this.seededRandom = mulberry32(capsule.manifest.session.seed);
     this.currentRedactor = new Redactor({
@@ -1153,6 +1223,17 @@ export class Runtime implements BugCapsuleSession {
     });
     engine.precheck();
     this.installErrorHandlers();
+
+    // Replay never reaches a real WebSocket (capsule-v2 §5): without the app's adapter, every connect is ws.unrecorded.
+    if (!this.integrations.some((i) => i.replayAdapters?.some((a) => a.adapter === WEBSOCKET_ADAPTER_ID))) {
+      const guard = new WebSocketIntegration();
+      try {
+        guard.setUp(this);
+        this.cleanups.push(() => guard.dispose());
+      } catch (e) {
+        engine.diverge('restore.websocket', `setup failed: ${String(e)}`);
+      }
+    }
 
     const names = new Set(this.integrations.map((i) => i.name));
     for (const name of capsule.manifest.integrations ?? []) {
@@ -1166,7 +1247,7 @@ export class Runtime implements BugCapsuleSession {
       }
     }
     for (const name of Object.keys(capsule.checkpoint.data)) {
-      if (!names.has(name)) engine.diverge('restore.missingIntegration', name);
+      if (!names.has(name) && name !== 'interactions') engine.diverge('restore.missingIntegration', name);
     }
     for (const integration of this.integrations) {
       const data = capsule.checkpoint.data[integration.name];
@@ -1188,6 +1269,28 @@ export class Runtime implements BugCapsuleSession {
     // Start after the app's first frame, like capture's anchor.
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(go, 0));
     else setTimeout(go, 0);
+  }
+
+  /**
+   * capsule-v2 §2 preflight, before the app starts: every required
+   * dependency needs an installed adapter that supports its schema, and
+   * nothing it recorded may be open at a periodic checkpoint (the web SDK
+   * restores no connection). Null when replay can go ahead.
+   */
+  private preflight(capsule: Capsule): string | null {
+    const adapters = new Map<string, readonly number[]>();
+    for (const i of this.integrations) for (const a of i.replayAdapters ?? []) adapters.set(a.adapter, a.schemas);
+    const required = requiredDependencies(capsule.manifest);
+    for (const d of required) {
+      const schemas = adapters.get(d.adapter);
+      if (!schemas) return `dependency.unsupported: ${d.adapter} schema ${d.schema} (dependency "${d.id}"): add the integration that provides this adapter`;
+      if (!schemas.includes(d.schema)) return `dependency.schema: ${d.adapter} schema ${d.schema} (dependency "${d.id}"); this SDK replays schema ${schemas.join(', ')}`;
+    }
+    const ids = new Set(required.map((d) => d.id));
+    const open = (capsule.checkpoint.data.interactions as { open?: { dep?: string; type?: string; id?: string }[] } | undefined)?.open ?? [];
+    const unrestorable = open.find((o) => ids.has(String(o.dep)));
+    if (unrestorable) return `dependency.unrestorable: ${unrestorable.type} ${unrestorable.id} of dependency "${unrestorable.dep}" was open at the periodic checkpoint`;
+    return null;
   }
 
   // ---------------------------------------------------------------- history

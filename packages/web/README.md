@@ -29,11 +29,13 @@ renderApp();
   `captureMessage`, `captureFeedback`, scope, `startTransaction` /
   `startSpan`, `showFeedbackWidget`, `flush`), the integrations
   (`networkIntegration`, `fetchIntegration`, `xhrIntegration`,
+  `webSocketIntegration` (opt-in WebSocket capture and offline replay),
   `historyIntegration`, `localStorageIntegration`,
   `sessionStorageIntegration`, `indexedDbIntegration`, `sentryCompanion`) and
   types.
-- `@bugcapsule/web/core`: the environment-neutral capsule model, codec with
-  bounded decoding, validator, redaction, request keys, flight recorder and
+- `@bugcapsule/web/core`: the environment-neutral capsule model (format v1
+  and v2), codec with bounded decoding, validator, redaction, request keys,
+  typed values and interaction scheduling, flight recorder, verdict rules and
   replay protocol types. Works in browsers, workers and Node.
 
 Related packages: [`@bugcapsule/react`](https://www.npmjs.com/package/@bugcapsule/react),

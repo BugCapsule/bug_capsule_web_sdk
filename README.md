@@ -216,6 +216,7 @@ See [`packages/react`](packages/react) for every hook and component.
 | Navigation | History API, hash changes, React Router | Reproduced by the inputs |
 | Errors and assertions | `error`, `unhandledrejection`, `reportError`, error boundary, `check` / `fail` | Matched by signature or id |
 | Network | `fetch` and `XMLHttpRequest` | Recorded responses served with the recorded latency, status and errors |
+| WebSockets (opt-in, `webSocketIntegration()`) | connects, opens, sends, messages, errors and closes of `WebSocket` in the page | An in-memory socket replays the recorded server side; nothing connects for real |
 | Storage | allowlisted `localStorage` / `sessionStorage` keys, IndexedDB adapters, registered state | Restored before your app renders |
 
 **Never captured:** untracked input values, DOM content, cookies, storage
@@ -223,6 +224,37 @@ outside your allowlist, password inputs.
 
 Details on request matching, body limits and storage:
 [docs/how-it-works.md](docs/how-it-works.md).
+
+### WebSockets
+
+WebSocket capture is opt-in. Add the integration next to the others:
+
+```ts
+import { webSocketIntegration } from '@bugcapsule/web';
+
+integrations: [networkIntegration(), webSocketIntegration()],
+```
+
+- Connection URLs are redacted. Text frames go through the same redaction as
+  JSON bodies. A frame that redaction changed is not replayed (pass
+  `redactedReplayable: true` when your app doesn't branch on those fields).
+- Binary frames are recorded as their size only. Replay can't deliver those,
+  and verification reports them. To keep them, pass a serializer:
+  `webSocketIntegration({ binary: { decode, encode } })`.
+  `rawBinarySerializer` keeps bytes as they are, without redaction.
+- Limits: 64 KiB per frame, 1 MiB of frames per 5 minutes, and 32 sockets
+  open at once. Anything beyond that is recorded as a gap, so such a capsule
+  can't verify a fix.
+- In replay, `WebSocket` is an in-memory socket. Connections are matched by
+  URL (minus `ignoreQuery` parameters) and by order. Sends are compared with
+  the recording. Server messages arrive in recorded order with their recorded
+  delays. A connection the recording doesn't have fails like a network error
+  (close code 1006).
+- Your project's capture settings can switch off WebSocket capture
+  (adapter `bugcapsule-web.websocket`) without affecting the rest.
+- Capsules with WebSockets use capsule format v2. Update the CLI and the
+  other BugCapsule tools before you turn the integration on.
+- Tested in Chromium 153, Firefox 155 and WebKit 26.6 (Playwright 1.63).
 
 ## Replay, verify and keep a regression test
 
@@ -375,7 +407,10 @@ never your app.
   `BugCapsule.now()` and `BugCapsule.random()`.
 - Hover-only interactions aren't recorded. Keyboard input is replayed only for
   tracked inputs.
-- WebSockets, EventSource, service workers, `navigator.sendBeacon` and
+- WebSockets are captured only with `webSocketIntegration()`, and only in
+  the page itself. Sockets in workers or iframes aren't captured, nor are
+  sockets opened before `BugCapsule.init` or through a `WebSocket` reference
+  taken before it. EventSource, service workers, `navigator.sendBeacon` and
   third-party iframes are not captured.
 - Replay is strict: a request the recording never saw fails like a network
   error. A fix that sends new requests verifies as `INCONCLUSIVE`; capture a

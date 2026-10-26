@@ -16,6 +16,7 @@ limitations. The capsule format itself is documented at
 | Errors | `error`, `unhandledrejection`, `reportError`, error boundary | Matched by signature |
 | Assertions | `check` / `fail` | Matched by id |
 | Network | `fetch` and `XMLHttpRequest` (`networkIntegration`) | Recorded responses served in the page with the recorded latency, status, headers, errors, cancellation and timeouts |
+| WebSockets | `WebSocket` in the page (`webSocketIntegration`, opt-in): connect, open, send, message, error, close | An in-memory `WebSocket` serves the recorded server side; it never opens a connection |
 | Storage | Allowlisted `localStorage` / `sessionStorage` keys; IndexedDB adapters; registered state | Restored before the app renders (the runner also restores web storage before any page script) |
 | Lifecycle | `visibilitychange`, `pagehide`, `pageshow` | Synthetic events with an overridden `document.visibilityState` (`partial`) |
 
@@ -42,6 +43,57 @@ content, cookies, storage outside the allowlist, password inputs.
   scripts, requests from code that bypassed the SDK) and reports
   `network.escaped`. Allow static origins with `web.allowOrigins` in
   `bugcapsule.json`.
+
+## WebSocket capture and replay
+
+Capsule format v2 adds interaction dependencies. A capsule that recorded
+sockets lists the `bugcapsule-web.websocket` adapter (schema 1) in
+`manifest.dependencies` and is written as v2. Capsules without sockets stay
+v1. Readers of earlier versions refuse v2 capsules instead of misreading them.
+
+- **Capture.** The integration replaces `WebSocket` in the page with a
+  subclass of the browser's, so the app keeps a real socket. Each connection
+  records a redacted URL and a match key: the redacted URL without fragment
+  and without `ignoreQuery` parameters (default `_`, `ts`, `timestamp`,
+  `nonce`, `cachebust`), query sorted. It also records an occurrence (earlier
+  connects with the same key) and a reconnect attempt. Frames are recorded as
+  payloads. Text frames are redacted like JSON bodies. Binary frames are kept
+  as their size unless a serializer is set, and `Blob` frames always are (use
+  `binaryType = 'arraybuffer'` to record them). Closes record the initiator,
+  code and reason. A `send` that throws (still connecting) is recorded for
+  diagnosis only.
+- **Bounds.** 64 KiB per frame, 1 MiB of frame payloads per 5-minute
+  window, 32 sockets captured at once. Anything beyond is `truncated`,
+  metadata only, or not captured. It is listed as a gap on the dependency,
+  which makes coverage `partial` and adds a `dependency.ws` eligibility entry.
+- **Clock.** Events recorded in one task (a message and the send it
+  triggers, frames delivered together) share a timestamp. Replay then orders
+  them by their recorded order, never by rounding.
+- **Replay.** Before the app starts, a capsule that needs an adapter this
+  build doesn't have (or a schema it doesn't support) ends `incompatible`
+  with `dependency.unsupported` (or `dependency.schema`). So does one with a
+  socket open at a periodic checkpoint (`dependency.unrestorable`).
+  `WebSocket` is then an in-memory socket with the browser API: ready states,
+  `on*` handlers and listeners, `binaryType`, `bufferedAmount`, `protocol`,
+  and `send`/`close` validation. Connects are matched by key and occurrence,
+  sends and client closes by order. Recorded server events are delivered
+  their recorded delay after the operation that released them, and equal
+  times go in recorded order. Idle compression never skips past a due
+  delivery, and an open but quiet socket doesn't hold replay up.
+- **Divergences.** A connection or send the recording doesn't have reports
+  `ws.unrecorded` and fails like a network error: an `error` event, then
+  close 1006. This also happens when the capsule has no WebSocket recording
+  at all, and when the app didn't set up the integration, so replay never
+  opens a real socket. A send that differs from the recording reports
+  `ws.mismatch`. A message without a replayable payload reports
+  `ws.noPayload`. Recorded events left unused report `ws.unused`, or
+  `ws.unusedAfterFailure` after the failure, which is expected. All except
+  the last make an attempt invalid, so they can't produce a "fixed" verdict.
+  The runner also blocks real sockets that escaped the page's `WebSocket`
+  (workers, early references) and reports `dependency.live`.
+- **Switching it off.** Your project's capture settings can disable the
+  adapter (`bugcapsule-web.websocket`). Capture of new sockets stops,
+  buffered WebSocket events are dropped, and HTTP and other capture continue.
 
 ## Storage and uploads
 
@@ -82,7 +134,13 @@ production.
   `BugCapsule.random()`.
 - Hover-only interactions are not recorded (moves are recorded only while a
   pointer is pressed). Keyboard input is replayed only through tracked inputs.
-- WebSockets, EventSource payloads, service workers (blocked during replay),
+- WebSockets are captured only with `webSocketIntegration()` and only in
+  the page realm. Sockets in workers, iframes or other realms aren't
+  captured, nor are sockets created before `BugCapsule.init` or through a
+  `WebSocket` reference taken before it. Ping/pong and frame-level details
+  aren't recorded. Binary frames need a serializer, and `Blob` frames are
+  always recorded as their size.
+- EventSource payloads, service workers (blocked during replay),
   `navigator.sendBeacon` and third-party iframes are not captured.
 - A fix that makes the app send requests the recording never saw cannot be
   verified as `FIXED`: strict replay reports `network.unrecorded` and the

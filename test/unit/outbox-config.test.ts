@@ -153,8 +153,12 @@ describe('RemoteConfigController', () => {
       sessionTracking: true,
       maxBreadcrumbs: 100,
       tracePropagationTargets: null,
+      // capsule-v2 §7: no interaction adapter switched off
+      disabledAdapters: [],
     });
     assert.throws(() => parseRemoteConfig({ enabled: 'yes' }));
+    assert.deepEqual(parseRemoteConfig({ disabledAdapters: ['bugcapsule-web.websocket', 7] }).disabledAdapters, ['bugcapsule-web.websocket', '7']);
+    assert.throws(() => parseRemoteConfig({ disabledAdapters: 'bugcapsule-web.websocket' }));
   });
 
   it('caches per backend URL and ingest key; a config for another scope is ignored', async () => {
