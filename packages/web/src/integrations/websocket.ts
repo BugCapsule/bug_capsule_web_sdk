@@ -252,6 +252,10 @@ export class WebSocketIntegration implements BugCapsuleIntegration {
   /** A frame as a payload object (text, binary through the serializer, or metadata). */
   framePayload(frame: unknown, info: WebSocketFrameInfo, encoder: PayloadEncoder): InteractionPayload {
     const data = normalizeFrame(frame);
+    // Body capture off (local or remote setting) omits frames too (capsule-v2 §7).
+    if (this.session && !this.session.captureNetworkBodies) {
+      return { mode: 'omitted', replayable: false, bytes: frameSize(data), kind: typeof data === 'string' ? 'text' : 'binary' };
+    }
     if (typeof data === 'string') return encoder.encode(data, 'text');
     if (isBlob(data)) {
       this.gap(DependencyGaps.payloadBinaryMetadata, this.options.binary ? 'Blob frames are recorded as metadata (use binaryType = "arraybuffer")' : undefined);

@@ -181,6 +181,21 @@ function quotesServer(): void {
 }
 
 describe('WebSocket adapter: capture → capsule → replay', () => {
+  it('omits frames when body capture is off', async () => {
+    const t = new Transport();
+    await capture(t, {}, { captureNetworkBodies: false });
+    quotesServer();
+    quotesApp();
+    await until(() => t.capsules.length === 1);
+    const frames = t.capsules[0]!.events.filter((e: any) => e.type === 'ws.send' || e.type === 'ws.message');
+    assert.ok(frames.length > 0);
+    for (const f of frames) {
+      assert.equal(f.data.payload.mode, 'omitted');
+      assert.equal(f.data.payload.replayable, false);
+      assert.equal('value' in f.data.payload, false);
+    }
+  });
+
   it('replays a race on concurrent identical sockets in recorded order, without the network', async () => {
     const t = new Transport();
     await capture(t);
