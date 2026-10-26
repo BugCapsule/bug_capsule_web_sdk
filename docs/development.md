@@ -25,7 +25,7 @@ The unit tests fail when the copies differ.
 1. `npm run build && npm test`, then the demo end-to-end run
    ([examples/shop](../examples/shop/README.md)).
 2. Bump the version in the four `package.json` files and `SDK_VERSION` in
-   `packages/web/src/runtime.ts` (it is written into every capsule and
+   `packages/web/src/version.ts` (it is written into every capsule and
    envelope).
 3. `npm run pack:all`, inspect the tarballs (`tar -tzf`), install them in a
    clean project and type-check.
