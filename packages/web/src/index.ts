@@ -88,3 +88,5 @@ export type {
   TransactionPayload,
   User,
 } from './monitoring/types.js';
+
+export { ScreenshotIntegration, screenshotPngFromCanvas, type ScreenshotOptions } from './integrations/screenshots.js';
