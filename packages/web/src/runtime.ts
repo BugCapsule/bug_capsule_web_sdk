@@ -329,6 +329,7 @@ export class Runtime implements BugCapsuleSession {
           if (out.bodyEncoding === 'base64') out.responseBody = data.responseBody;
           if (out.requestEncoding === 'base64') out.requestBody = data.requestBody;
         }
+        if (type === 'screenshot') out.base64 = data.base64; // Already masked binary pixels; metadata still redacted.
         if (type === 'failure' && typeof data.signature === 'string') out.signature = data.signature;
         if (isInteraction(type)) {
           // Adapters redact payloads and keys themselves (capsule-v2 §3); a second pass could alter bytes or the match key.
