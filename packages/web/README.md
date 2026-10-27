@@ -17,7 +17,7 @@ await BugCapsule.init({ token: 'bcsdk.v1.…' });   // SDK token from the BugCap
 renderApp();
 ```
 
-> SDK tokens and connection status are available starting with `0.4.0-beta.2`.
+> SDK tokens and connection status are available starting with `0.4.0-beta.3`.
 
 **Get started:** [Web SDK guide](https://docs.bugcapsule.com/web.html) ·
 [README with the full setup](https://github.com/BugCapsule/bug_capsule_web_sdk#readme) ·
@@ -61,7 +61,7 @@ step by step:
 
 To keep Sentry as the error and issue tool, BugCapsule can run next to it
 and capture the replayable capsule for the same failure. The
-`sentryCompanion()` integration (since 0.4.0-beta.2)
+`sentryCompanion()` integration (since 0.4.0-beta.3)
 records each side's id on the other, so one Sentry event maps to one capsule
 by id (never by message or time):
 
