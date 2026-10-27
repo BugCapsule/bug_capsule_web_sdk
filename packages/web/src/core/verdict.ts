@@ -92,7 +92,7 @@ export function assessAttempt(r: ReplayReport): AttemptAssessment {
       if (r.expectedSignature === null || r.expectedSignature === undefined) {
         return { report: r, status: 'invalid', reasons: ['reported a reproduction without an expected failure'], reasonCodes: [] };
       }
-      return { report: r, status: 'reproduced', reasons: [], reasonCodes: [] };
+      return { report: r, status: 'reproduced', reasons: [], reasonCodes: r.divergences.some(d => d.type === 'failure.different_frame') ? ['failure.different_frame'] : [] };
     case 'incompatible':
       reasons.push(`incompatible: ${r.message ?? 'capsule cannot run against this build'}`);
       if (r.message?.startsWith('dependency.')) codes.add('dependency.unsupported');
@@ -110,6 +110,7 @@ export function assessAttempt(r: ReplayReport): AttemptAssessment {
         reasons.push(`only ${r.eventsDispatched} of ${expected} recorded inputs were replayed`);
       }
       for (const f of r.otherFailures) reasons.push(`unexpected failure: ${f.signature}`);
+      if (r.otherFailures.some(f => f.kind === 'crash') || (r.otherFailures.length > 0 && r.expectedSignature?.startsWith('crash:'))) codes.add('failure.different');
       const material = new Set(r.divergences.filter(isMaterialDivergence).map((d) => d.type));
       for (const type of material) {
         const n = r.divergences.filter((d) => d.type === type).length;

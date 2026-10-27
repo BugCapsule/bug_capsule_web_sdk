@@ -185,7 +185,7 @@ function validate(root: unknown): void {
   int(session, 'durationMs', sp);
 
   const failure = optObject(m, 'failure', mp);
-  if (failure) validateFailure(failure, `${mp}.failure`);
+  if (failure) validateFailure(failure, `${mp}.failure`, specVersion);
 
   const ep = `${mp}.eligibility`;
   const eligibility = object(m.eligibility, ep);
@@ -299,8 +299,8 @@ function validate(root: unknown): void {
   });
 }
 
-function validateFailure(f: Obj, path: string): void {
-  oneOf(f, 'kind', path, ['exception', 'assertion', 'manual']);
+function validateFailure(f: Obj, path: string, specVersion: number): void {
+  oneOf(f, 'kind', path, specVersion >= 2 ? ['exception', 'assertion', 'manual', 'crash'] : ['exception', 'assertion', 'manual']);
   string(f, 'signature', path, 1000);
   string(f, 'type', path, 1000, 0);
   optString(f, 'message', path, 10_000);

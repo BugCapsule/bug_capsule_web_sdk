@@ -1,12 +1,30 @@
-# @bugcapsule/cli
+# BugCapsule CLI
+
+Install with Node.js 20 or newer:
+
+```sh
+npm install -g @bugcapsule/cli@0.4.0-beta.3
+bugcapsule login
+bugcapsule --help
+```
+
+No Dart or Flutter installation is required. The first command downloads and
+verifies the standalone CLI engine (0.4.1-beta.7), then caches it in
+`~/.bugcapsule/bin`. macOS ARM64/x64, Linux ARM64/x64 and Windows x64 are
+supported. Direct binaries are available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1-beta.7).
+
+Use `bugcapsule inspect`, `run`, `verify`, `regress`, and `gate` for capsules
+from all four runtimes. Replay/build operations need only the target app's
+toolchain. Existing `bugcapsule-cli sourcemaps` commands remain supported;
+`bugcapsule sourcemaps` works too.
+
 
 Build tooling for the [BugCapsule web SDK](https://github.com/BugCapsule/bug_capsule_web_sdk#readme):
 injects debug ids into your bundles and uploads source maps, so error events
 from minified code show your original files and lines. Guide:
 [Release symbols and source maps](https://docs.bugcapsule.com/symbols.html).
 
-This is not the replay CLI. Replay uses `bugcapsule` from the
-[`bug_capsule`](https://pub.dev/packages/bug_capsule) Dart package.
+The same package installs the standalone `bugcapsule` replay CLI described above.
 
 ```bash
 npm install -D @bugcapsule/cli

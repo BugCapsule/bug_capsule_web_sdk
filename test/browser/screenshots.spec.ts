@@ -13,7 +13,9 @@ test('records an approved masked canvas inside a capsule and renders its PNG byt
     ctx.fillStyle = '#000000'; ctx.fillText('synthetic-secret', 20, 50);
     // App policy masks the entire sensitive region before encoding.
     ctx.fillRect(0, 0, 320, 90);
-    const screenshots = new ScreenshotIntegration({enabled: true, captureRedactedPng: () => screenshotPngFromCanvas(canvas)});
+    // Slow CI canvas encoding can exceed the default one-second interval.
+    // Keep this integration check within an explicit window; unit tests cover the clock boundary.
+    const screenshots = new ScreenshotIntegration({enabled: true, minIntervalMs: 60000, captureRedactedPng: () => screenshotPngFromCanvas(canvas)});
     await BugCapsule.init({mode: 'qa', monitoring: false, backend: {url: backendUrl, ingestKey: 'bci_test_key_0123456789abcdefghij'}, integrations: [screenshots]});
     await new Promise<void>(r => requestAnimationFrame(() => r()));
     const recorded = await screenshots.capture();

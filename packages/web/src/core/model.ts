@@ -7,7 +7,7 @@ export const SPEC_VERSION = 2;
 export type CaptureMode = 'debug' | 'qa' | 'production';
 export type CheckpointKind = 'launch' | 'periodic';
 export type EligibilityStatus = 'eligible' | 'partial' | 'ineligible';
-export type FailureKind = 'exception' | 'assertion' | 'manual';
+export type FailureKind = 'exception' | 'assertion' | 'manual' | 'crash';
 
 export interface CapsuleEvent {
   seq: number;
@@ -27,6 +27,7 @@ export interface Checkpoint {
 
 export interface FailureRecord {
   kind: FailureKind;
+  crash?: { mechanism?: string; signal?: number; inAppFrame?: string };
   signature: string;
   type: string;
   message: string;
@@ -124,7 +125,7 @@ export interface Manifest {
   failure?: FailureRecord | null;
   eligibility: Eligibility;
   integrations?: string[];
-  stats?: { eventCount?: number; droppedEvents?: number; checkpointKind?: CheckpointKind };
+  stats?: { eventCount?: number; droppedEvents?: number; journalGapMs?: number; checkpointKind?: CheckpointKind };
   labels?: Record<string, string>;
   redaction?: { extraKeys?: string[]; extraHeaders?: string[] };
   runtime?: RuntimeInfo;
