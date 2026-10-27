@@ -1,14 +1,15 @@
 {
   "name": "@bugcapsule/cli",
   "homepage": "https://bugcapsule.com",
-  "version": "0.4.0-beta.2",
-  "description": "BugCapsule build tooling for the web: inject debug ids into bundles and source maps, upload source maps for symbolication.",
+  "version": "0.4.0-beta.3",
+  "description": "BugCapsule CLI: sign in, inspect, replay, verify, gate releases and upload source maps. No Dart or Flutter required to install.",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "bugcapsule-cli": "./bin/bugcapsule-cli.js"
+    "bugcapsule-cli": "./bin/bugcapsule-cli.js",
+    "bugcapsule": "./bin/bugcapsule.js"
   },
   "exports": {
     ".": {
