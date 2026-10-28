@@ -1,7 +1,7 @@
 {
   "name": "@bugcapsule/web-replay",
   "homepage": "https://bugcapsule.com",
-  "version": "0.4.0-beta.3",
+  "version": "0.4.0-beta.4",
   "description": "Playwright runner that replays BugCapsule web capsules against the real app for the bugcapsule CLI.",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -27,7 +27,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@bugcapsule/web": "0.4.0-beta.3",
+    "@bugcapsule/web": "0.4.0-beta.4",
     "playwright-core": "1.63.0"
   },
   "engines": {

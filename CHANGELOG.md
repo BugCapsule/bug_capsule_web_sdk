@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.4.0-beta.4 — 2026-10-28
+
+- Show a retry fallback when React rendering fails, including null errors; preserve custom fallbacks.
 
 - Apply the project's `maxInteractionPayloadBytes` capture setting: WebSocket frames larger than it are recorded as `truncated`.
 - Package READMEs install the `beta` dist-tag, so npm doesn't resolve an older release.

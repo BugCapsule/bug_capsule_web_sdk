@@ -1,7 +1,7 @@
 {
   "name": "@bugcapsule/web",
   "homepage": "https://bugcapsule.com",
-  "version": "0.4.0-beta.3",
+  "version": "0.4.0-beta.4",
   "description": "BugCapsule web SDK: capture failures in the browser as portable .bugcapsule capsules and replay them against the real app with the bugcapsule CLI.",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
