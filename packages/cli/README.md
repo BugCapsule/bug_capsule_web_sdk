@@ -3,7 +3,7 @@
 Install with Node.js 20 or newer:
 
 ```sh
-npm install -g @bugcapsule/cli@0.4.0-beta.3
+npm install -g @bugcapsule/cli@0.4.0-beta.4
 bugcapsule login
 bugcapsule --help
 ```
