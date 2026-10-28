@@ -474,11 +474,12 @@ describe('tracing', () => {
     monitor.captureException(new Error('x'));
     await monitor.flush(1000);
     const txs = transport.items<TransactionPayload>('transaction');
-    assert.deepEqual(txs.map((t) => [t.op, t.name, t.status]), [
+    // Same-millisecond outbox entries are ordered by their random IDs.
+    assert.deepEqual(txs.map((t) => [t.op, t.name, t.status]).sort(), [
       ['pageload', '/', 'cancelled'],
       ['navigation', '/product/:productId', 'cancelled'],
       ['navigation', '/cart', 'cancelled'],
-    ]);
+    ].sort());
     assert.equal(new Set(txs.map((t) => t.traceId)).size, 3, 'one trace per navigation');
     const nav = transport.items<EventPayload>('event')[0]!.breadcrumbs!.filter((b) => b.category === 'navigation');
     assert.deepEqual(nav.map((b) => [b.data!.from, b.data!.to]), [

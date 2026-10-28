@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile, rename, rm, chmod } from 'node:fs/promises'
 import { spawn } from 'node:child_process';
 
 // Pin the native engine independently of the web SDK package version.
-export const CLI_VERSION = '0.4.1-beta.7';
+export const CLI_VERSION = '0.4.1-beta.8';
 const RELEASE = `https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/download/v${CLI_VERSION}`;
 export function assetName(platform = process.platform, arch = process.arch) {
   if (!['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-x64'].includes(`${platform}-${arch}`)) {
