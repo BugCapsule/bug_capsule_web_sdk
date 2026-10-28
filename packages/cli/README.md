@@ -27,7 +27,7 @@ from minified code show your original files and lines. Guide:
 The same package installs the standalone `bugcapsule` replay CLI described above.
 
 ```bash
-npm install -D @bugcapsule/cli
+npm install -D @bugcapsule/cli@beta
 
 # 1. after the build, before deploying
 npx bugcapsule-cli sourcemaps inject dist
