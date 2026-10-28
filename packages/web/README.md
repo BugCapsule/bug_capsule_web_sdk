@@ -7,7 +7,7 @@ health, performance traces and user feedback. No framework, no dependencies,
 TypeScript types included.
 
 ```bash
-npm install @bugcapsule/web
+npm install @bugcapsule/web@beta
 ```
 
 ```ts
@@ -17,7 +17,7 @@ await BugCapsule.init({ token: 'bcsdk.v1.…' });   // SDK token from the BugCap
 renderApp();
 ```
 
-> SDK tokens and connection status are available starting with `0.4.0-beta.2`.
+> SDK tokens and connection status are available starting with `0.4.0-beta.3`.
 
 **Get started:** [Web SDK guide](https://docs.bugcapsule.com/web.html) ·
 [README with the full setup](https://github.com/BugCapsule/bug_capsule_web_sdk#readme) ·
@@ -42,11 +42,26 @@ Related packages: [`@bugcapsule/react`](https://www.npmjs.com/package/@bugcapsul
 [`@bugcapsule/web-replay`](https://www.npmjs.com/package/@bugcapsule/web-replay),
 [`@bugcapsule/cli`](https://www.npmjs.com/package/@bugcapsule/cli).
 
+## Moving from Sentry
+
+BugCapsule reports errors, release health, performance and feedback itself,
+so you can replace Sentry. The
+[migration guide](https://docs.bugcapsule.com/migrate-from-sentry.html) goes
+step by step:
+
+1. Point `Sentry.init({ dsn })` at your BugCapsule project's DSN (Project
+   settings › Keys › Sentry SDKs in the dashboard). Your Sentry SDK keeps
+   working and its events arrive in BugCapsule.
+2. Add `@bugcapsule/web`. While the Sentry SDK still reports errors, use the
+   companion below with `monitoring: false`: Sentry's events then arrive in
+   BugCapsule already linked to their capsules.
+3. Remove the Sentry SDK and drop `monitoring: false`.
+
 ## Using BugCapsule with Sentry
 
-If the app already uses Sentry for errors, keep it: Sentry stays the error
-and issue tool, and BugCapsule captures the replayable capsule for the same
-failure. The `sentryCompanion()` integration (since 0.4.0-beta.2)
+To keep Sentry as the error and issue tool, BugCapsule can run next to it
+and capture the replayable capsule for the same failure. The
+`sentryCompanion()` integration (since 0.4.0-beta.3)
 records each side's id on the other, so one Sentry event maps to one capsule
 by id (never by message or time):
 
@@ -65,7 +80,7 @@ the Sentry JavaScript SDK v8 and later (`processEvent`); it was tested with
 ### Install and set up
 
 ```bash
-npm install @bugcapsule/web @sentry/browser
+npm install @bugcapsule/web@beta @sentry/browser
 ```
 
 ```ts
@@ -86,7 +101,7 @@ await BugCapsule.init({
   gitSha: import.meta.env.VITE_BUGCAPSULE_GIT_SHA,
   token: 'bcsdk.v1.…',                      // SDK token from the BugCapsule dashboard
   integrations: [networkIntegration(), historyIntegration()],
-  monitoring: false,                        // Sentry is the monitoring tool
+  monitoring: false,                        // Sentry's SDK reports the errors
 });
 ```
 
@@ -98,7 +113,8 @@ also get a capsule, even though BugCapsule never saw them; calling both
 `Sentry.captureException(err)` and `BugCapsule.reportError(err)` for the same
 error is fine (still one capsule).
 
-`monitoring: false` is the recommended companion configuration: BugCapsule
+`monitoring: false` is the recommended companion configuration (whether the
+Sentry DSN points at Sentry or at BugCapsule): BugCapsule
 then sends no error events, release-health sessions, transactions or
 feedback of its own, and adds no `traceparent` / `baggage` headers, so errors
 are not reported twice. Capsule capture, upload and replay work as before.

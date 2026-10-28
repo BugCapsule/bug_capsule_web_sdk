@@ -5,7 +5,7 @@ replay attempt. You don't run it yourself: install it as a dev dependency of
 your app and the CLI finds it in `node_modules`.
 
 ```bash
-npm install -D @bugcapsule/web-replay
+npm install -D @bugcapsule/web-replay@beta
 npx playwright install chromium
 ```
 

@@ -349,6 +349,11 @@ export class Runtime implements BugCapsuleSession {
     return !this.engine && (this.remote?.current?.disabledAdapters.includes(adapterId) ?? false);
   }
 
+  /** capsule-v2 §7: the backend can lower the per-payload interaction limit (`maxInteractionPayloadBytes`). */
+  maxInteractionPayloadBytes(): number | undefined {
+    return this.engine ? undefined : (this.remote?.current?.maxInteractionPayloadBytes ?? undefined);
+  }
+
   reportError(error: unknown, context: CaptureContext = {}): void {
     this.onError(error, context.mechanism ?? { type: 'manual', handled: true }, context);
   }
