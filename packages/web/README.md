@@ -7,7 +7,7 @@ health, performance traces and user feedback. No framework, no dependencies,
 TypeScript types included.
 
 ```bash
-npm install @bugcapsule/web
+npm install @bugcapsule/web@beta
 ```
 
 ```ts
@@ -80,7 +80,7 @@ the Sentry JavaScript SDK v8 and later (`processEvent`); it was tested with
 ### Install and set up
 
 ```bash
-npm install @bugcapsule/web @sentry/browser
+npm install @bugcapsule/web@beta @sentry/browser
 ```
 
 ```ts

@@ -209,6 +209,12 @@ export interface BugCapsuleSession {
    * (HTTP, input) is unaffected.
    */
   adapterDisabled?(adapterId: string): boolean;
+  /**
+   * The backend's lower per-payload interaction limit
+   * (`maxInteractionPayloadBytes` in the remote config, capsule-v2 §7);
+   * undefined when it set none.
+   */
+  maxInteractionPayloadBytes?(): number | undefined;
 }
 
 export interface ReplayContext {
