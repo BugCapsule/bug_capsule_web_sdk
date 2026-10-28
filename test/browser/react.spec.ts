@@ -114,3 +114,28 @@ test('reactErrorHandler for React 19 root callbacks reports uncaught errors as u
   expect(event.exception.values.at(-1).mechanism).toMatchObject({ type: 'uncaught', handled: false });
   expect(envelopeItems(backend, 'session').map((s) => s.status)).toContain('crashed');
 });
+
+
+test('default boundary fallback hides details, reports once, and retries', async ({ page }) => {
+  await page.goto(`${ORIGIN}/`);
+  await init(page);
+  await page.evaluate(() => {
+    const w = window as any;
+    const h = w.React.createElement;
+    w.__fail = true;
+    function Screen() {
+      if (w.__fail) throw new Error('private-render-detail');
+      return h('p', null, 'Screen restored');
+    }
+    w.ReactDOMClient.createRoot(document.getElementById('app')).render(
+      h(w.BCReact.BugCapsuleErrorBoundary, null, h(Screen)),
+    );
+  });
+  await expect(page.getByRole('alert')).toContainText('could not load');
+  await expect(page.locator('body')).not.toContainText('private-render-detail');
+  await page.evaluate(() => (window as any).BC.BugCapsule.flush(5000));
+  expect(envelopeItems(backend, 'event').filter((e) => e.contexts?.react)).toHaveLength(1);
+  await page.evaluate(() => { (window as any).__fail = false; });
+  await page.getByRole('button', { name: 'Try again' }).click();
+  await expect(page.getByText('Screen restored')).toBeVisible();
+});

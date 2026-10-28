@@ -105,11 +105,11 @@ interface BoundaryProps {
  * them before they reach `window.onerror`): a failure for capsules and an
  * error event (mechanism `manual`, handled, with `contexts.react.componentStack`).
  */
-export class BugCapsuleErrorBoundary extends Component<BoundaryProps, { error: unknown; eventId: string | null }> {
-  override state: { error: unknown; eventId: string | null } = { error: null, eventId: null };
+export class BugCapsuleErrorBoundary extends Component<BoundaryProps, { error: unknown; eventId: string | null; failed: boolean }> {
+  override state: { error: unknown; eventId: string | null; failed: boolean } = { error: null, eventId: null, failed: false };
 
   static getDerivedStateFromError(error: unknown) {
-    return { error };
+    return { error, failed: true };
   }
 
   override componentDidCatch(error: unknown, info: ErrorInfo): void {
@@ -125,12 +125,19 @@ export class BugCapsuleErrorBoundary extends Component<BoundaryProps, { error: u
     this.props.onError?.(error, componentStack, eventId);
   }
 
-  reset = () => this.setState({ error: null, eventId: null });
+  reset = () => this.setState({ error: null, eventId: null, failed: false });
 
   override render(): ReactNode {
-    if (this.state.error === null) return this.props.children;
+    if (!this.state.failed) return this.props.children;
     const { fallback } = this.props;
-    return typeof fallback === 'function' ? fallback(this.state.error, this.reset, this.state.eventId) : (fallback ?? null);
+    if (typeof fallback === 'function') return fallback(this.state.error, this.reset, this.state.eventId);
+    if (fallback !== undefined) return fallback;
+    return (
+      <div role="alert" data-bugcapsule-ignore="" style={{ padding: 24, color: '#334155', background: '#f8fafc', fontFamily: 'system-ui, sans-serif' }}>
+        <p>This part of the screen could not load. Please try again.</p>
+        <button type="button" onClick={this.reset}>Try again</button>
+      </div>
+    );
   }
 }
 
