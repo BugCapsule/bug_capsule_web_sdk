@@ -3,7 +3,7 @@
 React hooks and components for [`@bugcapsule/web`](https://www.npmjs.com/package/@bugcapsule/web).
 
 ```bash
-npm install @bugcapsule/web @bugcapsule/react   # same version for both
+npm install @bugcapsule/web@beta @bugcapsule/react@beta   # same version for both
 ```
 
 Requires React 18+. The React Router listener needs React Router 6.4+.

@@ -3,6 +3,7 @@ import {
   DependencyGaps,
   DependencyKinds,
   DependencyStats,
+  lowerLimits,
   OccurrenceCounter,
   parsePayload,
   PayloadBudget,
@@ -329,6 +330,8 @@ export class WebSocketIntegration implements BugCapsuleIntegration {
 
   private payloadFor(data: unknown, c: Captured, direction: 'send' | 'message'): Record<string, unknown> {
     const before = this.stats.dropped;
+    // The remote config can lower the per-frame limit at any time (capsule-v2 §7).
+    this.budget.limits = lowerLimits(this.limits, { maxPayloadBytes: this.session?.maxInteractionPayloadBytes?.() });
     const json = payloadToJson(this.framePayload(data, { direction, url: c.url }, this.encoder!));
     // Told apart from binary metadata in the manifest gaps.
     if (this.stats.dropped > before) this.dropped.add(json);

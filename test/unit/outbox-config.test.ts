@@ -155,6 +155,7 @@ describe('RemoteConfigController', () => {
       tracePropagationTargets: null,
       // capsule-v2 §7: no interaction adapter switched off
       disabledAdapters: [],
+      maxInteractionPayloadBytes: null,
     });
     assert.throws(() => parseRemoteConfig({ enabled: 'yes' }));
     assert.deepEqual(parseRemoteConfig({ disabledAdapters: ['bugcapsule-web.websocket', 7] }).disabledAdapters, ['bugcapsule-web.websocket', '7']);
