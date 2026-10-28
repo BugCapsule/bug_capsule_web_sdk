@@ -63,7 +63,7 @@ npm install -D @bugcapsule/cli@beta                    # only for source-map upl
 Install `@bugcapsule/web` and `@bugcapsule/react` at the same version: the React
 package needs that exact version as a peer dependency.
 
-> **Versions.** SDK tokens and connection status are available starting with `0.4.0-beta.2`.
+> **Versions.** SDK tokens and connection status are available starting with `0.4.0-beta.3`.
 > Existing explicit backend configuration remains supported.
 
 ## Connect your app
@@ -260,17 +260,15 @@ integrations: [networkIntegration(), webSocketIntegration()],
 
 ### Install the CLI
 
-The `bugcapsule` CLI replays capsules from every BugCapsule SDK. It is a Dart
-tool shipped in the Flutter package, so it needs
-[Flutter](https://docs.flutter.dev/get-started/install) installed even for web
-projects.
+The standalone `bugcapsule` CLI replays capsules from every BugCapsule SDK.
+Install it with Node.js 20 or newer; Dart and Flutter are not required.
 
 ```bash
-dart pub global activate bug_capsule 0.4.1-beta.2
+npm install -g @bugcapsule/cli@0.4.0-beta.3
 bugcapsule --version
 ```
 
-If the shell can't find `bugcapsule`, add `~/.pub-cache/bin` to your `PATH`.
+Direct executables are also available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1-beta.7).
 
 Log in with a personal token from **Project settings → Keys & CLI access**.
 In CI, use a service token in `BUGCAPSULE_TOKEN` instead.

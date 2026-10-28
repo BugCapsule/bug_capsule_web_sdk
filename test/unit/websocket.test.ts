@@ -422,6 +422,25 @@ describe('WebSocket adapter: capture → capsule → replay', () => {
     assert.equal(MockSocket.instances.length, 2, 'the app still gets real sockets');
   });
 
+  it('remote maxInteractionPayloadBytes lowers the per-frame limit', async () => {
+    const t = new Transport();
+    t.config = { enabled: true, sampleRate: 1, maxInteractionPayloadBytes: 16 };
+    await capture(t);
+    await BugCapsule.refreshRemoteConfig();
+    quotesServer();
+    quotesApp();
+    await until(() => t.capsules.length === 1);
+    const doc = t.capsules[0]!;
+    const sends = doc.events.filter((e: any) => e.type === 'ws.send');
+    assert.ok(sends.length > 0);
+    for (const s of sends) assert.deepEqual(s.data.payload, { mode: 'truncated', replayable: false, bytes: 34, kind: 'text' });
+    const messages = doc.events.filter((e: any) => e.type === 'ws.message');
+    assert.deepEqual(messages.map((e: any) => e.data.payload.mode), ['full', 'full', 'full']);
+    assert.ok(doc.manifest.dependencies[0].gaps.some((g: any) => g.code === 'payload.truncated'));
+    assert.equal(parseRemoteConfig({ maxInteractionPayloadBytes: 1e9 }).maxInteractionPayloadBytes, 64 * 1024);
+    assert.equal(parseRemoteConfig({}).maxInteractionPayloadBytes, null);
+  });
+
   it('switching the adapter off mid-session drops buffered WebSocket events only', async () => {
     const t = new Transport();
     globalThis.fetch = (async () => new Response('{}', { headers: { 'content-type': 'application/json' } })) as typeof fetch;

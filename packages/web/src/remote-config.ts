@@ -26,6 +26,11 @@ export interface RemoteCaptureConfig {
    * `bugcapsule-web.websocket`); HTTP and other capture continue.
    */
   disabledAdapters: string[];
+  /**
+   * capsule-v2 §7: lowers the per-payload interaction limit (encoded JSON
+   * bytes, at most 64 KiB). Null when the backend did not send it.
+   */
+  maxInteractionPayloadBytes: number | null;
 }
 
 /** Parses `/v1/sdk/config` (or the cache); throws on wrong types, clamps values. */
@@ -46,6 +51,7 @@ export function parseRemoteConfig(j: Record<string, unknown>, fetchedAtMs?: numb
   const breadcrumbs = field<number>('maxBreadcrumbs', 'number') ?? 100;
   const targets = field<unknown[]>('tracePropagationTargets', 'array');
   const disabledAdapters = field<unknown[]>('disabledAdapters', 'array');
+  const interactionPayload = field<number>('maxInteractionPayloadBytes', 'number');
   return {
     enabled: field<boolean>('enabled', 'boolean') ?? true,
     sampleRate: Number.isNaN(rate) ? 0 : Math.min(1, Math.max(0, rate)),
@@ -61,6 +67,8 @@ export function parseRemoteConfig(j: Record<string, unknown>, fetchedAtMs?: numb
     maxBreadcrumbs: Number.isNaN(breadcrumbs) ? 0 : Math.min(100, Math.max(0, Math.floor(breadcrumbs))),
     tracePropagationTargets: targets === undefined ? null : targets.map(String),
     disabledAdapters: disabledAdapters === undefined ? [] : disabledAdapters.map(String),
+    maxInteractionPayloadBytes:
+      interactionPayload === undefined || Number.isNaN(interactionPayload) ? null : Math.min(64 * 1024, Math.max(0, Math.floor(interactionPayload))),
   };
 }
 

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Apply the project's `maxInteractionPayloadBytes` capture setting: WebSocket frames larger than it are recorded as `truncated`.
+- Package READMEs install the `beta` dist-tag, so npm doesn't resolve an older release.
+
+## 0.4.0-beta.3 — 2026-10-27
+
+- Install the multi-runtime `bugcapsule` command with `npm install -g @bugcapsule/cli`; no Dart or Flutter installation is required. Native engines are downloaded with checksum verification. `bugcapsule-cli sourcemaps` remains available.
+- Add opt-in inline screenshots and timeline support.
+
 - Read capsule format v2 (interaction dependencies) as well as v1. Capsules
   are written as v2 only when they recorded an interaction dependency.
 - Add opt-in WebSocket capture and offline replay: `webSocketIntegration()`,
