@@ -42,6 +42,7 @@ bugcapsule regress ─► runs in CI from now on
 | [`@bugcapsule/react`](packages/react) | React hooks and components: actions, tracked inputs and state, error boundary, capture button, feedback widget, React Router listener. |
 | [`@bugcapsule/web-replay`](packages/web-replay) | The Playwright runner the `bugcapsule` CLI starts for each replay attempt. Dev dependency. |
 | [`@bugcapsule/cli`](packages/cli) | Build tooling: injects debug ids and uploads source maps so minified stack traces become readable. |
+| [`@bugcapsule/emergency-guard`](packages/emergency-guard) | Node.js server guard for emergency policies: verifies the signed policy document and refuses irreversible operations (orders, charges) while a block is active. |
 | [`examples/shop`](examples/shop) | A React demo shop with four planted bugs. |
 
 ## Requirements

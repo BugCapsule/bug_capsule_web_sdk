@@ -1,0 +1,41 @@
+{
+  "name": "@bugcapsule/emergency-guard",
+  "homepage": "https://bugcapsule.com",
+  "version": "0.4.0-beta.4",
+  "description": "BugCapsule emergency recovery for Node.js servers: verify signed emergency policies and refuse irreversible operations (orders, charges) while a block is active.",
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BugCapsule/bug_capsule_web_sdk",
+    "directory": "packages/emergency-guard"
+  },
+  "keywords": [
+    "bugcapsule",
+    "emergency",
+    "kill-switch",
+    "feature-flag",
+    "idempotency"
+  ]
+}

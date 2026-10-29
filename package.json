@@ -1,22 +1,24 @@
 {
   "name": "bugcapsule-web-workspace",
   "private": true,
-  "description": "BugCapsule web SDK monorepo: @bugcapsule/web, @bugcapsule/react, @bugcapsule/web-replay, @bugcapsule/cli and the shop demo.",
+  "description": "BugCapsule web SDK monorepo: @bugcapsule/web, @bugcapsule/react, @bugcapsule/web-replay, @bugcapsule/cli, @bugcapsule/emergency-guard and the shop demo.",
   "type": "module",
   "workspaces": [
     "packages/web",
     "packages/react",
     "packages/web-replay",
     "packages/cli",
+    "packages/emergency-guard",
     "examples/shop"
   ],
   "scripts": {
-    "build": "npm run build -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay -w @bugcapsule/cli",
-    "typecheck": "npm run typecheck -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay -w @bugcapsule/cli",
+    "build": "npm run build -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay -w @bugcapsule/cli -w @bugcapsule/emergency-guard",
+    "typecheck": "npm run typecheck -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay -w @bugcapsule/cli -w @bugcapsule/emergency-guard",
     "test": "npm run test:unit && npm run test:browser",
     "test:unit": "node --import tsx --test 'test/unit/**/*.test.ts'",
     "test:browser": "playwright test -c test/browser/playwright.config.ts",
-    "pack:all": "mkdir -p dist-packages && npm pack -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay -w @bugcapsule/cli --pack-destination dist-packages"
+    "pack:all": "mkdir -p dist-packages && npm pack -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay -w @bugcapsule/cli -w @bugcapsule/emergency-guard --pack-destination dist-packages",
+    "test:e2e:emergency-guard": "node --import tsx --test 'test/e2e/emergency-guard.e2e.test.ts'"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
