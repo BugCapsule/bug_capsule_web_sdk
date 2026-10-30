@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add `@bugcapsule/emergency-guard`: server-side enforcement of emergency policies for Node.js 20+. Fetches and verifies the signed policy document (ES256 against the configured trust anchor), refuses replayed or expired documents, evaluates synchronously for platform `SERVER`, and throws `EmergencyBlockedError` (RFC 9457 `503` problem) before irreversible operations. Includes per-feature failure modes, `strong` consistency checks, an optional cache file, Express-style middleware and idempotency helpers. Passes the shared `spec-fixtures/emergency-v1` vectors.
+
 ## 0.4.0-beta.4 — 2026-10-28
 
 - Show a retry fallback when React rendering fails, including null errors; preserve custom fallbacks.

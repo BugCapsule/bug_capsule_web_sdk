@@ -8,7 +8,8 @@ For maintainers of this repository. App developers want the
 ```bash
 npm install
 npm run build                 # packages/*/dist (the demo uses the built packages)
-npm run test:unit             # core conformance (shared fixtures), outbox, remote config, monitoring, CLI
+npm run test:unit             # core conformance (shared fixtures), outbox, remote config, monitoring, CLI, emergency guard
+npm run test:e2e:emergency-guard  # opt-in: emergency guard against a real backend (BUGCAPSULE_EMERGENCY_E2E_* variables)
 npm run test:browser          # SDK in Chromium: capture, redaction, offline, kill switch, cross-tab, XHR, replay, monitoring, React
 npm run pack:all              # dist-packages/*.tgz for review (not published)
 ```
@@ -24,9 +25,10 @@ The unit tests fail when the copies differ.
 
 1. `npm run build && npm test`, then the demo end-to-end run
    ([examples/shop](../examples/shop/README.md)).
-2. Bump the version in the four `package.json` files and `SDK_VERSION` in
+2. Bump the version in the five `package.json` files, `SDK_VERSION` in
    `packages/web/src/version.ts` (it is written into every capsule and
-   envelope).
+   envelope) and `SDK_VERSION` in `packages/emergency-guard/src/version.ts`
+   (sent with policy fetches and receipts).
 3. `npm run pack:all`, inspect the tarballs (`tar -tzf`), install them in a
    clean project and type-check.
 4. Publish from a clean checkout (`npm publish -w … --access public`) only
