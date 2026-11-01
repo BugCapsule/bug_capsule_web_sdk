@@ -3,15 +3,19 @@
 Install with Node.js 20 or newer:
 
 ```sh
-npm install -g @bugcapsule/cli@0.4.0-beta.4
+npm install -g @bugcapsule/cli@0.4.0-beta.5
 bugcapsule login
 bugcapsule --help
 ```
 
 No Dart or Flutter installation is required. The first command downloads and
-verifies the standalone CLI engine (0.4.1-beta.7), then caches it in
+verifies the standalone CLI engine (0.4.1-beta.10), then caches it in
 `~/.bugcapsule/bin`. macOS ARM64/x64, Linux ARM64/x64 and Windows x64 are
-supported. Direct binaries are available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1-beta.7).
+supported. Direct binaries are available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1-beta.10).
+
+The CLI includes the reviewed patch compiler. Local `bugcapsule patch`
+compilation commands require Node.js24 or newer; no engine checkout is needed.
+Authenticated patch uploads do not require a separate compiler installation.
 
 Use `bugcapsule inspect`, `run`, `verify`, `regress`, and `gate` for capsules
 from all four runtimes. Replay/build operations need only the target app's
