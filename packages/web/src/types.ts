@@ -57,6 +57,12 @@ export interface BugCapsuleConfig {
   productionSampleRate?: number;
   autoCaptureOnFailure?: boolean;
   maxCapsulesPerSession?: number;
+  /**
+   * Record request/response bodies (redacted). Default: off in `production`
+   * mode, on in `debug` and `qa`. The backend's remote config can turn
+   * bodies off, never on. Binary bodies also need `captureBinaryBodies` on
+   * the network integration.
+   */
   captureNetworkBodies?: boolean;
   /** Default 256 KiB. */
   maxBodyBytes?: number;

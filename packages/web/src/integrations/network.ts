@@ -14,7 +14,13 @@ export interface NetworkOptions {
   rules?: Iterable<EndpointRule | EndpointRuleInit>;
   ignoreQuery?: Iterable<string>;
   ignoreBodyFields?: Iterable<string>;
-  /** Binary response bodies kept up to this size (default 64 KiB). */
+  /**
+   * Record binary and non-UTF-8 bodies (base64, up to `maxBinaryBytes`).
+   * Default false: only their size and content type are recorded
+   * (`bodyEncoding: 'omitted'`), in every mode.
+   */
+  captureBinaryBodies?: boolean;
+  /** Binary bodies kept up to this size when `captureBinaryBodies` is on (default 64 KiB). */
   maxBinaryBytes?: number;
   /** Request bodies up to this size take part in the request key (default 64 KiB, fixed). */
   maxKeyBodyBytes?: number;
@@ -151,7 +157,10 @@ export class NetworkIntegration implements BugCapsuleIntegration {
       (e) => e.type === 'http' && e.data.error == null && (e.data.bodyEncoding === 'omitted' || e.data.bodyEncoding === 'truncated'),
     );
     if (missing.length > 0) {
-      eligibility.missing('network.bodies', `${missing.length} recorded responses have no body (capture disabled, excluded or too large)`);
+      eligibility.missing(
+        'network.bodies',
+        `${missing.length} recorded responses have no body (body capture off: the production default or captureNetworkBodies: false; binary without captureBinaryBodies; excluded; or too large). Replay serves them empty and reports network.noBody`,
+      );
     }
   }
 
@@ -165,8 +174,13 @@ export class NetworkIntegration implements BugCapsuleIntegration {
     }
   }
 
-  /** Decodes a complete body for keying and storage: redacted JSON, form fields, scrubbed text, or small binary as base64. */
-  decode(bytes: Uint8Array, contentType: string | null): [unknown, BodyEncoding] {
+  /**
+   * Decodes a complete body for keying and storage: redacted JSON, form
+   * fields, scrubbed text, or small binary as base64. Binary is stored only
+   * with `captureBinaryBodies` (`omitted` otherwise); keys always use it, so
+   * request keys do not depend on capture settings.
+   */
+  decode(bytes: Uint8Array, contentType: string | null, forKey = false): [unknown, BodyEncoding] {
     if (bytes.length === 0) return [null, 'json'];
     const redactor = this.session!.redactor;
     const type = (contentType ?? '').toLowerCase();
@@ -175,7 +189,7 @@ export class NetworkIntegration implements BugCapsuleIntegration {
       try {
         text = utf8Decode(bytes);
       } catch {
-        return this.binary(bytes);
+        return this.binary(bytes, forKey);
       }
       if (type.includes('json') || type === '') {
         try {
@@ -188,18 +202,25 @@ export class NetworkIntegration implements BugCapsuleIntegration {
         try {
           const form: Record<string, string> = {};
           for (const [k, v] of new URLSearchParams(text)) form[k] = v;
-          return [redactor.redactJson(form), 'form'];
+          return [redactor.redactForm(form), 'form'];
         } catch {
           return [redactor.scrubText(text), 'text'];
         }
       }
       return [redactor.scrubText(text), 'text'];
     }
-    return this.binary(bytes);
+    return this.binary(bytes, forKey);
   }
 
-  private binary(bytes: Uint8Array): [unknown, BodyEncoding] {
+  private binary(bytes: Uint8Array, forKey: boolean): [unknown, BodyEncoding] {
+    if (!forKey && !this.opts.captureBinaryBodies) return [null, 'omitted'];
     return bytes.length > this.opts.maxBinaryBytes ? [null, 'truncated'] : [base64Encode(bytes), 'base64'];
+  }
+
+  /** Size and content type of a body recorded as `omitted` after decoding (binary without `captureBinaryBodies`). */
+  private omittedMeta(prefix: 'request' | 'response', encoding: BodyEncoding, bytes: Uint8Array, contentType: string | null): Record<string, unknown> {
+    if (encoding !== 'omitted') return {};
+    return { [`${prefix}BodyBytes`]: bytes.length, [`${prefix}ContentType`]: contentType };
   }
 
   private encodeBody(body: unknown, encoding: string): Uint8Array {
@@ -222,7 +243,7 @@ export class NetworkIntegration implements BugCapsuleIntegration {
     const s = this.session!;
     let keyBody: unknown = null;
     if (body.bytes && body.complete && !body.unhashable && body.length <= this.opts.maxKeyBodyBytes && !isMultipart(body.contentType)) {
-      keyBody = this.decode(body.bytes, body.contentType)[0];
+      keyBody = this.decode(body.bytes, body.contentType, true)[0];
     }
     return this.keys.keyFor(method, s.redactor.redactUrl(url), keyBody);
   }
@@ -254,10 +275,13 @@ export class NetworkIntegration implements BugCapsuleIntegration {
     const captureBodies = s.captureNetworkBodies && !excluded;
     let requestBody: unknown = null;
     let requestEncoding: BodyEncoding = 'json';
+    let binaryMeta: Record<string, unknown> = {};
     if (body.length > 0 || body.unhashable) {
       if (!captureBodies || isMultipart(body.contentType) || body.unhashable) requestEncoding = 'omitted';
-      else if (body.bytes && body.complete && body.length <= s.maxBodyBytes) [requestBody, requestEncoding] = this.decode(body.bytes, body.contentType);
-      else requestEncoding = 'truncated';
+      else if (body.bytes && body.complete && body.length <= s.maxBodyBytes) {
+        [requestBody, requestEncoding] = this.decode(body.bytes, body.contentType);
+        binaryMeta = this.omittedMeta('request', requestEncoding, body.bytes, body.contentType);
+      } else requestEncoding = 'truncated';
     }
     return {
       id: this.nextId++,
@@ -268,6 +292,7 @@ export class NetworkIntegration implements BugCapsuleIntegration {
       ...(excluded ? { excluded: true } : { requestHeaders: s.redactor.redactHeaders(headers) }),
       requestBody,
       requestEncoding,
+      ...binaryMeta,
     };
   }
 
@@ -471,7 +496,7 @@ export class NetworkIntegration implements BugCapsuleIntegration {
         if (!read.complete) return finish({ bodyEncoding: 'truncated' });
         try {
           const [responseBody, bodyEncoding] = this.decode(read.bytes, contentType);
-          finish({ responseBody, bodyEncoding });
+          finish({ responseBody, bodyEncoding, ...this.omittedMeta('response', bodyEncoding, read.bytes, contentType) });
         } catch {
           finish({ bodyEncoding: 'truncated' });
         }
@@ -644,7 +669,7 @@ export class NetworkIntegration implements BugCapsuleIntegration {
           const bytes = utf8Encode(xhr.responseText ?? '');
           if (bytes.length > (isText(type) ? session.maxBodyBytes : this.opts.maxBinaryBytes)) return { ...out, bodyEncoding: 'truncated' };
           const [responseBody, bodyEncoding] = this.decode(bytes, headers['content-type'] ?? null);
-          return { ...out, responseBody, bodyEncoding };
+          return { ...out, responseBody, bodyEncoding, ...this.omittedMeta('response', bodyEncoding, bytes, headers['content-type'] ?? null) };
         }
         if (rt === 'json') {
           const text = xhr.response == null ? '' : JSON.stringify(xhr.response);
@@ -652,8 +677,9 @@ export class NetworkIntegration implements BugCapsuleIntegration {
           return { ...out, responseBody: xhr.response == null ? null : session.redactor.redactJson(xhr.response), bodyEncoding: 'json' };
         }
         if (rt === 'arraybuffer' && xhr.response instanceof ArrayBuffer) {
-          const [responseBody, bodyEncoding] = this.decode(new Uint8Array(xhr.response), headers['content-type'] ?? null);
-          return { ...out, responseBody, bodyEncoding };
+          const bytes = new Uint8Array(xhr.response);
+          const [responseBody, bodyEncoding] = this.decode(bytes, headers['content-type'] ?? null);
+          return { ...out, responseBody, bodyEncoding, ...this.omittedMeta('response', bodyEncoding, bytes, headers['content-type'] ?? null) };
         }
         return { ...out, bodyEncoding: 'omitted' };
       });

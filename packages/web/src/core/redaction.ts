@@ -23,8 +23,28 @@ export class Redactor {
     'proxy-authorization',
     'x-api-key',
     'x-auth-token',
+    'x-session',
+    'authentication',
   ]);
-  private static readonly exactKeys = new Set(['pin', 'pan', 'otp', 'ssn', 'cvv', 'cvc', 'passcode', 'iban']);
+  private static readonly exactKeys = new Set([
+    'pin',
+    'pan',
+    'otp',
+    'ssn',
+    'cvv',
+    'cvc',
+    'passcode',
+    'iban',
+    // Exact names only (after dropping _ - . and spaces), so 'author',
+    // 'accessibility' or 'passenger' stay readable. 'auth', 'sid' and
+    // 'session' are sensitive in URLs and form bodies (exactQueryKeys) but
+    // not as JSON keys: the shared conformance fixture pins that.
+    'pwd',
+    'pass',
+    'csrf',
+    'refresh',
+    'access',
+  ]);
   private static readonly substringKeys = [
     'password',
     'passwd',
@@ -146,6 +166,20 @@ export class Redactor {
     }
     const scrubbed = this.scrubText(value);
     return [scrubbed, scrubbed !== value];
+  }
+
+  /**
+   * Fields of an `application/x-www-form-urlencoded` body. Form fields are
+   * URL parameters, so names use the query list ({@link isSensitiveQueryKey}:
+   * also `code`, `sid`, `session`, `auth`, signatures); values are redacted
+   * like JSON strings.
+   */
+  redactForm(fields: Record<string, string>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      out[key] = this.isSensitiveQueryKey(key) ? Redactor.placeholder : this.redact(value, 1)[0];
+    }
+    return out;
   }
 
   // ------------------------------------------------------------ free text

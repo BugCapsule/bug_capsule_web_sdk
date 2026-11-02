@@ -223,6 +223,18 @@ See [`packages/react`](packages/react) for every hook and component.
 **Never captured:** untracked input values, DOM content, cookies, storage
 outside your allowlist, password inputs.
 
+**Request and response bodies** are recorded (redacted) in `debug` and `qa`
+mode and **not recorded in `production` mode** unless you set
+`captureNetworkBodies: true`. Your explicit setting always wins; the
+backend's remote config can turn bodies off but never on. Binary and
+non-UTF-8 bodies are recorded as size and content type only
+(`requestBodyBytes` / `responseBodyBytes`, `requestContentType` /
+`responseContentType`) in every mode; opt in with
+`networkIntegration({ captureBinaryBodies: true })`. A capsule without
+bodies still replays: responses are served with their recorded status,
+headers and latency and an empty body, the capsule's eligibility lists
+`network.bodies`, and the attempt reports `network.noBody`.
+
 Details on request matching, body limits and storage:
 [docs/how-it-works.md](docs/how-it-works.md).
 
@@ -368,6 +380,19 @@ tag pointing to the capsule that replays it. Setup and details:
 Redaction runs in the browser before anything is stored or uploaded:
 sensitive keys in bodies, storage and state; sensitive headers; credentials in
 URLs; and tokens, JWTs, API keys and card numbers in free text.
+
+- Keys: anything containing `password`, `passwd`, `token`, `secret`,
+  `apikey`, `authorization`, `cookie`, `cardnumber`, `creditcard`,
+  `privatekey` or `sessionid`, and the exact names `pin`, `pan`, `otp`,
+  `ssn`, `cvv`, `cvc`, `passcode`, `iban`, `pwd`, `pass`, `csrf`, `refresh`
+  and `access` (so `author` or `accessibility` stay readable). Matching
+  ignores case, `_`, `-`, `.` and spaces.
+- URL parameters and `application/x-www-form-urlencoded` bodies also redact
+  `code`, `sig`, `key`, `auth`, `sid`, `session` and names containing
+  `signature` or `credential`.
+- Headers: `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`,
+  `X-API-Key`, `X-Auth-Token`, `X-Session`, `Authentication`, and any header
+  whose name is a sensitive key.
 
 Tighten it with `redactKeys`, `redactHeaders`, `redactPatterns`,
 `beforeRecord`, `beforeCheckpoint`, `networkIntegration({ exclude })` and
