@@ -14,6 +14,7 @@ import {
   type Checkpoint,
   type CheckpointKind,
   type FailureRecord,
+  type Manifest,
   type SentryLink,
 } from './core/model.js';
 import { replaySettingsFromJson, type ReplayReport, type ReplaySettings } from './core/protocol.js';
@@ -23,6 +24,7 @@ import { validateCapsuleDocument } from './core/validator.js';
 import { HistoryIntegration } from './integrations/history.js';
 import { NetworkIntegration } from './integrations/network.js';
 import { StateIntegration } from './integrations/state.js';
+import { WebStorageIntegration } from './integrations/storage.js';
 import { Monitor } from './monitoring/client.js';
 import type { CaptureContext, Mechanism, MonitorHooks, MonitoringLink } from './monitoring/types.js';
 import { BackendTransport, configScope, RemoteConfigController, type BugCapsuleTransport, type RemoteCaptureConfig } from './remote-config.js';
@@ -978,6 +980,8 @@ export class Runtime implements BugCapsuleSession {
       'random.seeded': 'explicit',
     };
     for (const i of this.integrations) Object.assign(capabilities, i.capabilities ?? {});
+    const storagePolicy: Manifest['storagePolicy'] = {};
+    for (const i of this.integrations) if (i instanceof WebStorageIntegration) storagePolicy[i.name] = i.policy;
     const nav = globalThis.navigator;
     const capsule: Capsule = {
       format: 'bugcapsule.capsule',
@@ -1027,6 +1031,7 @@ export class Runtime implements BugCapsuleSession {
         ...(link ? { monitoring: { ...link } } : {}),
         ...(sentry ? { links: { sentry: { ...sentry } } } : {}),
         ...(dependencies.length > 0 ? { dependencies } : {}),
+        ...(Object.keys(storagePolicy).length > 0 ? { storagePolicy } : {}),
       },
       checkpoint: { ...window.checkpoint, t: window.checkpoint.t - anchor },
       events,

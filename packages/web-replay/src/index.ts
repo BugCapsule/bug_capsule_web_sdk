@@ -5,6 +5,7 @@ import {
   capsuleToJson,
   decodeCapsule,
   replaySettingsFromJson,
+  storageSeed,
   type Capsule,
   type Divergence,
   type GzipCodec,
@@ -104,7 +105,8 @@ async function deliver(replayUrl: string, report: ReplayReport, log: (l: string)
 /**
  * Runs one replay attempt: loads the capsule and settings from the CLI,
  * opens the app in a fresh Chromium context sized like the recording,
- * restores allowlisted storage before any page script runs, blocks requests
+ * seeds storage allowed by the capsule's `storagePolicy` before any page
+ * script runs (other keys: `restore.disallowed`), blocks requests
  * to origins other than the app's (reported as `network.escaped`) and real
  * WebSockets when the capsule records them (`dependency.live`), lets the
  * in-page engine (the app's own `@bugcapsule/web` with `allowReplay: true`)
@@ -176,10 +178,15 @@ export async function runReplayAttempt(options: ReplayAttemptOptions): Promise<R
       });
     }
 
-    const storage = {
-      local: (capsule.checkpoint.data.local_storage ?? null) as Record<string, string> | null,
-      session: (capsule.checkpoint.data.session_storage ?? null) as Record<string, string> | null,
-    };
+    // Seed only keys the capture-time policy recorded in the manifest allows (none without one).
+    const local = storageSeed(capsule.manifest, 'local_storage', capsule.checkpoint.data.local_storage);
+    const session = storageSeed(capsule.manifest, 'session_storage', capsule.checkpoint.data.session_storage);
+    const storage = { local: local.seed, session: session.seed };
+    const unseeded: Divergence[] = [
+      ...local.skipped.map((k) => ({ type: 'restore.disallowed', detail: `local_storage.${k}` })),
+      ...session.skipped.map((k) => ({ type: 'restore.disallowed', detail: `session_storage.${k}` })),
+    ].slice(0, 100);
+    if (unseeded.length > 0) log(`not seeding ${unseeded.length} storage key(s) outside the capsule's storage policy`);
     await context.addInitScript(
       ({ origin, storage }) => {
         if (location.origin !== origin) return;
@@ -238,7 +245,7 @@ export async function runReplayAttempt(options: ReplayAttemptOptions): Promise<R
       ),
     );
     let report = await Promise.race([reportPromise, crashed, timedOut]);
-    if (escaped.length > 0) report = { ...report, divergences: [...report.divergences, ...escaped] };
+    if (escaped.length > 0 || unseeded.length > 0) report = { ...report, divergences: [...report.divergences, ...unseeded, ...escaped] };
     if (!report.attemptId && settings.attemptId) report = { ...report, attemptId: settings.attemptId };
     await deliver(base, report, log);
     return report;
