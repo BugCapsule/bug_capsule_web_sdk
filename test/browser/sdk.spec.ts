@@ -106,6 +106,7 @@ test('captures a failure with redacted network, input and pointer events, then u
   expect(ls['shop.cart']).toBe('[1]');
   expect(ls['shop.authToken']).toBe('[REDACTED]');
   expect(ls['other.key']).toBeUndefined();
+  expect(m.storagePolicy).toEqual({ local_storage: { allowPrefixes: ['shop.'], denyPrefixes: [] } });
   expect(doc.checkpoint.data.history.location).toBe('/cart?coupon=SAVE10&token=[REDACTED]');
   expect(byType('failure')).toHaveLength(1);
   expect(byType('failure')[0].data.stack).toBeUndefined();
@@ -395,6 +396,22 @@ test('replay reproduces a captured failure in the real page code', async ({ page
   expect(r.divergences.filter((d: any) => !['network.unused', 'build.gitSha'].includes(d.type))).toEqual([]);
   expect(apiHits).toBe(0); // served from the capsule, never the network
   expect(await replayPage.evaluate(() => (window as any).__legacy)).toBe('v0.9');
+});
+
+test('replay restores only keys the storage policy allows; a disallowed key in the capsule is reported, not written', async ({ page, context }) => {
+  const capsule = await captureCheckoutCapsule(page);
+  capsule.checkpoint.data.local_storage['other.injected'] = 'from the capsule';
+  const replayPage = await context.newPage();
+  const bridge = await withBridge(replayPage, capsule);
+  await replayPage.route(`${API}/**`, (r) => r.abort());
+  await replayPage.goto(`${ORIGIN}/`);
+  await replayPage.evaluate(() => localStorage.clear());
+  await init(replayPage, { allowReplay: true });
+  expect(await replayPage.evaluate(() => localStorage.getItem('shop.legacy'))).toBe('v0.9');
+  expect(await replayPage.evaluate(() => localStorage.getItem('other.injected'))).toBeNull();
+  await installApp(replayPage);
+  await expect.poll(() => bridge.reports.length, { timeout: 15_000 }).toBe(1);
+  expect(bridge.reports[0].divergences).toContainEqual({ type: 'restore.disallowed', detail: 'local_storage.other.injected' });
 });
 
 test('semantic replay invokes registered actions; a fix makes the attempt clean', async ({ page, context }) => {

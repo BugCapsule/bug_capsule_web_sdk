@@ -20,7 +20,9 @@ bugcapsule-web-runner --replay-url <armed attempt url> --app-url <app url> [--al
 
 Per attempt it loads the capsule and settings from the CLI (loopback,
 per-attempt token), opens the app in a fresh Chromium context sized like the
-recording, restores allowlisted web storage before any page script, blocks
+recording, seeds web storage before any page script (only keys the
+capsule's recorded `storagePolicy` allows; other keys, and every key of a
+capsule without a policy, are skipped and reported as `restore.disallowed`), blocks
 requests to origins other than the app's (`network.escaped`), lets the app's
 own SDK (`allowReplay: true`) replay inputs and serve recorded responses,
 dispatches pointer input as trusted browser input, and posts the report back

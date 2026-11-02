@@ -1,5 +1,5 @@
 import { Redactor } from '../core/redaction.js';
-import type { EligibilityBuilder } from '../core/model.js';
+import { storageKeyAllowed, type EligibilityBuilder, type StoragePolicy } from '../core/model.js';
 import type { BugCapsuleIntegration, BugCapsuleSession } from '../types.js';
 
 export interface WebStorageOptions {
@@ -12,7 +12,8 @@ export interface WebStorageOptions {
 /**
  * Snapshots allowlisted `localStorage` / `sessionStorage` keys into every
  * checkpoint and restores them before the app renders in replay. Nothing is
- * captured unless allowlisted. Sensitive keys keep only a placeholder; values
+ * captured or restored unless allowlisted (a disallowed key in a capsule is
+ * reported as `restore.disallowed` and not written). Sensitive keys keep only a placeholder; values
  * pass through redaction like every recorded string.
  */
 export class WebStorageIntegration implements BugCapsuleIntegration {
@@ -37,8 +38,13 @@ export class WebStorageIntegration implements BugCapsuleIntegration {
     }
   }
 
+  /** The key policy recorded in the manifest (`storagePolicy`), so replay seeds only these keys. */
+  get policy(): StoragePolicy {
+    return { allowPrefixes: [...this.options.allowPrefixes], denyPrefixes: [...(this.options.denyPrefixes ?? [])] };
+  }
+
   private allowed(key: string): boolean {
-    return this.options.allowPrefixes.some((p) => key.startsWith(p)) && !(this.options.denyPrefixes ?? []).some((p) => key.startsWith(p));
+    return storageKeyAllowed(this.options, key);
   }
 
   setUp(session: BugCapsuleSession): void {
@@ -81,6 +87,11 @@ export class WebStorageIntegration implements BugCapsuleIntegration {
     if (typeof data !== 'object' || data === null) return;
     for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
       if (typeof value !== 'string') continue;
+      if (!this.allowed(key)) {
+        // Same policy as capture and clearing: a capsule can't write keys this app never allowed.
+        session.replay?.diverge('restore.disallowed', `${this.name}.${key}`);
+        continue;
+      }
       if (value.includes(Redactor.placeholder)) session.replay?.diverge('storage.redacted', key);
       store.setItem(key, value);
     }

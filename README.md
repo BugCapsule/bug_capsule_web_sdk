@@ -218,7 +218,7 @@ See [`packages/react`](packages/react) for every hook and component.
 | Errors and assertions | `error`, `unhandledrejection`, `reportError`, error boundary, `check` / `fail` | Matched by signature or id |
 | Network | `fetch` and `XMLHttpRequest` | Recorded responses served with the recorded latency, status and errors |
 | WebSockets (opt-in, `webSocketIntegration()`) | connects, opens, sends, messages, errors and closes of `WebSocket` in the page | An in-memory socket replays the recorded server side; nothing connects for real |
-| Storage | allowlisted `localStorage` / `sessionStorage` keys, IndexedDB adapters, registered state | Restored before your app renders |
+| Storage | allowlisted `localStorage` / `sessionStorage` keys, IndexedDB adapters, registered state | Restored before your app renders; only keys your allowlist covers are written (others are reported as `restore.disallowed`) |
 
 **Never captured:** untracked input values, DOM content, cookies, storage
 outside your allowlist, password inputs.
