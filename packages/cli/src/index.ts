@@ -1,4 +1,4 @@
-import { findBundles, injectFile, uploadSourcemaps } from './sourcemaps.js';
+import { findBundles, injectFile, inputRoot, uploadSourcemaps } from './sourcemaps.js';
 
 export * from './sourcemaps.js';
 
@@ -14,7 +14,11 @@ Usage:
                  [--url-prefix ~/assets] [--no-sources] [--dry-run]
       Uploads source maps (and, with --release, the bundles) to
       POST /v1/debug-files. Needs the project secret key (bcs_…) in
-      BUGCAPSULE_SECRET_KEY or --key. --url defaults to BUGCAPSULE_URL.
+      BUGCAPSULE_SECRET_KEY (preferred) or --key. --url defaults to BUGCAPSULE_URL.
+
+Only .map files inside the given directory are read or uploaded: a
+sourceMappingURL that leaves it (../, an absolute path, a symlink) or names
+another kind of file is skipped and reported.
 
 Never ship source maps or the secret key to browsers.
 `;
@@ -58,14 +62,19 @@ export async function main(argv: string[], io: { out?: (s: string) => void; err?
   }
   const dryRun = flags['dry-run'] === true;
   if (command === 'inject') {
-    const files = await findBundles(paths);
+    let count = 0;
     let changed = 0;
-    for (const file of files) {
-      const r = await injectFile(file, { dryRun });
-      if (r.changed) changed++;
-      out(`${r.changed ? (dryRun ? 'would inject' : 'injected') : 'unchanged'} ${r.debugId} ${file}${r.map ? '' : ' (no source map)'}\n`);
+    for (const input of paths) {
+      const root = await inputRoot(input);
+      for (const file of await findBundles([input])) {
+        const r = await injectFile(file, { dryRun, root });
+        count++;
+        if (r.changed) changed++;
+        const note = r.rejected ? ` (source map skipped: ${r.rejected})` : r.map ? '' : ' (no source map)';
+        out(`${r.changed ? (dryRun ? 'would inject' : 'injected') : 'unchanged'} ${r.debugId} ${file}${note}\n`);
+      }
     }
-    out(`${files.length} bundles, ${changed} ${dryRun ? 'would change' : 'changed'}\n`);
+    out(`${count} bundles, ${changed} ${dryRun ? 'would change' : 'changed'}\n`);
     return 0;
   }
   const url = typeof flags.url === 'string' ? flags.url : env.BUGCAPSULE_URL;
@@ -73,6 +82,9 @@ export async function main(argv: string[], io: { out?: (s: string) => void; err?
   if (!url) {
     err('error: --url (or BUGCAPSULE_URL) is required\n');
     return 2;
+  }
+  if (typeof flags.key === 'string') {
+    err('warning: --key puts the secret key in your shell history and the process list; set BUGCAPSULE_SECRET_KEY instead\n');
   }
   if (!key && !dryRun) {
     err('error: the project secret key is required: BUGCAPSULE_SECRET_KEY or --key\n');
