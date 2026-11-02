@@ -43,6 +43,14 @@ export const EXPECTED_DIVERGENCES: ReadonlySet<string> = new Set([
   'native.unusedAfterFailure',
 ]);
 
+/**
+ * Divergence a runner adds when it let the replay reach the real network on
+ * request (`bugcapsule-web-runner --allow-live`). The attempt is never
+ * evidence, whatever its outcome: a live server may have produced (or hidden)
+ * the failure.
+ */
+export const UNSAFE_LIVE_DIVERGENCE = 'replay.unsafe_live';
+
 export function isMaterialDivergence(d: Pick<Divergence, 'type'>): boolean {
   return !EXPECTED_DIVERGENCES.has(d.type);
 }
@@ -87,6 +95,15 @@ export interface AttemptAssessment {
 export function assessAttempt(r: ReplayReport): AttemptAssessment {
   const reasons: string[] = [];
   const codes = new Set<string>();
+  const live = r.divergences.filter((d) => d.type === UNSAFE_LIVE_DIVERGENCE).length;
+  if (live > 0 && r.outcome !== 'incompatible') {
+    return {
+      report: r,
+      status: 'invalid',
+      reasons: [`divergence ${UNSAFE_LIVE_DIVERGENCE}${live > 1 ? ` ×${live}` : ''}: the replay reached the real network (--allow-live)`],
+      reasonCodes: [UNSAFE_LIVE_DIVERGENCE],
+    };
+  }
   switch (r.outcome) {
     case 'reproduced':
       if (r.expectedSignature === null || r.expectedSignature === undefined) {
