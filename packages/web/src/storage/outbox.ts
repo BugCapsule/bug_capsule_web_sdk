@@ -15,6 +15,8 @@ export const DEFAULT_ENVELOPE_OUTBOX_LIMITS: Required<OutboxLimits> = Object.fre
 });
 
 export const MAX_SAVED_CAPTURES = 20;
+/** Saved captures older than this are deleted (BC-ENT-038). */
+export const SAVED_CAPTURE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Which store an outbox uses and what a valid record looks like. */
 export interface OutboxStore {
@@ -261,12 +263,42 @@ export class UploadOutbox {
   }
 }
 
-/** Saved captures (newest {@link MAX_SAVED_CAPTURES} kept) for in-app QA tooling. */
+/** Ids of saved captures to delete: expired ones, then the oldest beyond {@link MAX_SAVED_CAPTURES}. */
+function capturesToRemove(records: StoredCapsule[], now: number): string[] {
+  const cutoff = now - SAVED_CAPTURE_MAX_AGE_MS;
+  const fresh = records.filter((r) => r.enqueuedAt >= cutoff);
+  const excess = Math.max(0, fresh.length - MAX_SAVED_CAPTURES);
+  return [...records.filter((r) => r.enqueuedAt < cutoff), ...fresh.slice(0, excess)].map((r) => r.id);
+}
+
+/**
+ * Saved captures for in-app QA tooling: the newest {@link MAX_SAVED_CAPTURES},
+ * none older than {@link SAVED_CAPTURE_MAX_AGE_MS}.
+ */
 export async function saveCapture(storage: SdkStorage, capsuleId: string, bytes: Uint8Array, now = Date.now()): Promise<void> {
   const record: StoredCapsule = { id: `${String(now).padStart(15, '0')}_${capsuleId}`, capsuleId, enqueuedAt: now, size: bytes.length, bytes };
   await storage.update('captures', (records) => {
-    const all = [...records, record];
-    const excess = all.length - MAX_SAVED_CAPTURES;
-    return { put: [record], remove: excess > 0 ? all.slice(0, excess).map((r) => r.id) : [], result: undefined };
+    const remove = capturesToRemove([...records, record], now);
+    return { put: remove.includes(record.id) ? [] : [record], remove, result: undefined };
   });
+}
+
+/** Deletes expired saved captures and returns the rest, oldest first. */
+export async function liveCaptures(storage: SdkStorage, now = Date.now()): Promise<StoredCapsule[]> {
+  return storage.update('captures', (records) => {
+    const remove = capturesToRemove(records, now);
+    return { remove, result: records.filter((r) => !remove.includes(r.id)) };
+  });
+}
+
+/** Deletes expired saved captures by key range (cheap: nothing is read). */
+export function expireSavedCaptures(storage: SdkStorage, now = Date.now()): Promise<void> {
+  return storage.removeOlderThan('captures', now - SAVED_CAPTURE_MAX_AGE_MS);
+}
+
+/** Deletes every queued capsule and envelope and every saved capture (consent withdrawn, kill switch). */
+export async function purgeCollected(storage: SdkStorage): Promise<void> {
+  for (const store of ['outbox', 'envelopes', 'captures'] as const) {
+    await storage.update(store, (records) => ({ remove: records.map((r) => r.id), result: undefined }));
+  }
 }

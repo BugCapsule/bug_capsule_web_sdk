@@ -254,6 +254,9 @@ describe('page lifecycle', () => {
     try {
       const { monitor, transport } = setup();
       await monitor.start();
+      // Let the start's own session update reach the transport first, so
+      // the order below doesn't depend on how fast the runner is.
+      await monitor.flush(1000);
       target.dispatchEvent(new Event('pagehide'));
       assert.deepEqual(transport.keepalive.flatMap((e) => e.items.map((i) => [i.type, (i.payload as SessionPayload).status])), [['session', 'exited']]);
       const shown = Object.assign(new Event('pageshow'), { persisted: true });
