@@ -23,6 +23,51 @@ export interface ReplaySettings {
   runtime?: string;
 }
 
+/** How strongly a clean attempt shows the failing path ran and now behaves (spec verdict-v2). */
+export type EvidenceLevel = 'none' | 'weak' | 'strong';
+
+/** What a v2 SDK observed beyond "the failure did not fire" (report field `evidence`). */
+export interface ReplayEvidence {
+  /**
+   * The capsule's failure assertion was evaluated during replay and held
+   * (`BugCapsule.check`); absent when it was never evaluated or the failure
+   * is not an assertion.
+   */
+  assertionPassed?: boolean;
+  /** `BugCapsule.expect` postconditions, evaluated after replay settled. */
+  postconditions?: Record<string, boolean>;
+  /** Every recorded input was dispatched and replay settled past the recorded failure point. */
+  failurePointPassed: boolean;
+}
+
+/** Reads `evidence` from a report's JSON like the Dart reader: unknown shapes become false/absent. Null when not an object. */
+export function replayEvidenceFromJson(j: unknown): ReplayEvidence | null {
+  if (typeof j !== 'object' || j === null || Array.isArray(j)) return null;
+  const o = j as Record<string, unknown>;
+  const out: ReplayEvidence = { failurePointPassed: o.failurePointPassed === true };
+  if (typeof o.assertionPassed === 'boolean') out.assertionPassed = o.assertionPassed;
+  if (typeof o.postconditions === 'object' && o.postconditions !== null && !Array.isArray(o.postconditions)) {
+    const entries = Object.entries(o.postconditions as Record<string, unknown>);
+    if (entries.length > 0) out.postconditions = Object.fromEntries(entries.map(([k, v]) => [k, v === true]));
+  }
+  return out;
+}
+
+/** Postconditions that did not hold. */
+export function failedPostconditions(e: ReplayEvidence | null | undefined): string[] {
+  return Object.entries(e?.postconditions ?? {})
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+}
+
+/** Strong: the assertion or postconditions held; weak: only the failure point was passed; none otherwise or when a postcondition failed. */
+export function evidenceLevel(e: ReplayEvidence | null | undefined): EvidenceLevel {
+  if (!e) return 'none';
+  if (failedPostconditions(e).length > 0) return 'none';
+  if (e.assertionPassed === true || Object.keys(e.postconditions ?? {}).length > 0) return 'strong';
+  return e.failurePointPassed ? 'weak' : 'none';
+}
+
 export function replaySettingsFromJson(j: Record<string, unknown>): ReplaySettings {
   const strategy = j.strategy === 'pointer' || j.strategy === 'semantic' ? j.strategy : 'auto';
   return {
@@ -61,4 +106,6 @@ export interface ReplayReport {
   message: string | null;
   attemptId?: string;
   runtime?: string;
+  /** Positive evidence (verdict v2); absent from SDKs that predate it. */
+  evidence?: ReplayEvidence;
 }

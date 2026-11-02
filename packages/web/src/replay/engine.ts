@@ -3,7 +3,7 @@ import { InteractionScript } from '../core/interactions.js';
 import { Redactor } from '../core/redaction.js';
 import { FixtureStore } from '../core/network.js';
 import { requiredDependencies, type Capsule, type CapsuleEvent, type FailureRecord } from '../core/model.js';
-import type { Divergence, ReplayReport, ReplaySettings, ReplayStrategy } from '../core/protocol.js';
+import type { Divergence, ReplayEvidence, ReplayReport, ReplaySettings, ReplayStrategy } from '../core/protocol.js';
 import type { ReplayContext } from '../types.js';
 import type { ActionRegistry } from '../actions.js';
 
@@ -33,6 +33,26 @@ export function detectReplayBridge(): ReplayBridge | null {
 }
 
 const now = () => performance.now();
+
+/**
+ * `BugCapsule.expect` postconditions by name. Module state like the
+ * actions, so they can be registered before `init`; only replay evaluates
+ * them.
+ */
+export const postconditions = new Map<string, () => boolean>();
+
+/** Postcondition results; one that throws counts as not holding. */
+export function evaluatePostconditions(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const [name, condition] of postconditions) {
+    try {
+      out[name] = condition() === true;
+    } catch {
+      out[name] = false;
+    }
+  }
+  return out;
+}
 
 /**
  * Drives a replay in the page (port of `replay_engine.dart`): dispatches
@@ -66,6 +86,14 @@ export class ReplayEngine implements ReplayContext {
   private started_ = false;
   /** Runs right before the report is built (e.g. to report unrestored state). */
   beforeReport: (() => void) | null = null;
+  private readonly passedChecks = new Set<string>();
+  /** Evaluates the app's postconditions; called once, after replay settled without the failure. */
+  postconditions: () => Record<string, boolean> = evaluatePostconditions;
+
+  /** `BugCapsule.check(assertionId, true)` ran during this replay (verdict v2 evidence). */
+  checkPassed(assertionId: string): void {
+    this.passedChecks.add(assertionId);
+  }
 
   constructor(
     readonly capsule: Capsule,
@@ -298,8 +326,24 @@ export class ReplayEngine implements ReplayContext {
     for (const [type, detail] of this.interactions.unused(expected?.t ?? null)) this.diverge(type, detail);
 
     const outcome = !expected ? 'no_assertion' : this.reproduced ? 'reproduced' : 'not_reproduced';
+    // Verdict v2: what shows the failing path ran and now behaves. A reproduction carries none.
+    const clean = outcome === 'not_reproduced';
+    let held: Record<string, boolean> = {};
+    if (clean) {
+      try {
+        held = this.postconditions();
+      } catch {
+        held = {};
+      }
+    }
+    const evidence: ReplayEvidence = {
+      ...(clean && expected!.kind === 'assertion' && expected!.assertionId && this.passedChecks.has(expected!.assertionId) ? { assertionPassed: true } : {}),
+      ...(Object.keys(held).length > 0 ? { postconditions: held } : {}),
+      failurePointPassed: clean && this.dispatched === toDispatch.length && this.elapsed() >= expected!.t - base,
+    };
     return {
       outcome,
+      evidence,
       attempt: this.settings.attempt,
       durationMs: Math.round(now() - this.started),
       strategy: this.strategy,

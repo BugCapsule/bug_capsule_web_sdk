@@ -183,7 +183,8 @@ await BugCapsule.init({
 |---|---|
 | `onClick={BugCapsule.action('cart.checkout', checkout)}` and `data-bugcapsule-action="cart.checkout"` | Replay can invoke the action by id; the attribute is also a stable selector for click replay. |
 | `BugCapsule.trackInput('login.email', inputEl)`, or `useTrackedInput` / `useTrackedState` in React | Typed text is replayed. Password inputs, `data-bugcapsule-sensitive` elements and `sensitive: true` are recorded as `[REDACTED]`. |
-| `BugCapsule.check('cart_total_non_negative', total >= 0)` / `BugCapsule.fail(id)` | Wrong behaviour that doesn't throw becomes a failure replay can check. |
+| `BugCapsule.check('cart_total_non_negative', total >= 0)` / `BugCapsule.fail(id)` | Wrong behaviour that doesn't throw becomes a failure replay can check. In replay, a passing `check` of the capsule's assertion is the evidence `verify` needs to call a fix FIXED. |
+| `BugCapsule.expect('cart.total_positive', () => cart.total > 0)` | A postcondition: what must hold after the scenario replays without its failure. A no-op outside replay; evaluated once after a clean replay settles (a throwing condition counts as false) and reported with the attempt. |
 | `BugCapsule.reportError(e)` / `<BugCapsuleErrorBoundary>` | Errors your code or React catches never reach `window.onerror`. |
 | `BugCapsule.registerState('cart', { serialize, restore })` / `useBugCapsuleState` | Your app's own state is saved in checkpoints and restored in replay. |
 | `indexedDbIntegration([{ name, snapshot, restore }])` | Your IndexedDB stores, through adapters you write. The SDK never reads IndexedDB on its own. |
@@ -318,6 +319,33 @@ bugcapsule regress add <id>             # keep it as a regression test
 bugcapsule regress run                  # in CI: exit 1 when a regression fails
 bugcapsule run <id> --app-url http://127.0.0.1:4317/   # replay against a build that is already running
 ```
+
+### When is a fix FIXED (verdict v2)
+
+Two clean runs are not proof: a race that reproduces half the time also
+misses twice in a row on unchanged code. Under verdict v2 (shared by every
+BugCapsule evaluator; `@bugcapsule/web/core` exports `evaluateVerifyV2`),
+`verify` reports **FIXED** only when:
+
+1. **the baseline reproduced**: the capsule's own build reproduced the failure
+   in every one of at least 3 attempts (a mixed baseline is FLAKY; none, or
+   no baseline, is INCONCLUSIVE);
+2. **enough candidate attempts** ran, all clean: at least 5 and up to 30,
+   from the baseline's Wilson 95% lower bound (3/3 → 8, 5/5 → 6, 10/10 → 5);
+3. **each clean attempt has positive evidence** from the SDK: the capsule's
+   `BugCapsule.check` assertion ran and held, or the registered
+   `BugCapsule.expect` postconditions all held. Reports without evidence
+   (older SDKs) are INCONCLUSIVE, and a postcondition that failed is
+   STILL FAILING;
+4. the capsule is eligible and no material divergence occurred.
+
+If the only evidence is that replay got past the recorded failure point (no
+assertion or postcondition evaluated), or the capsule is `partial`, the
+result is **FIXED (QUALIFIED)**, exit code 4. Any attempt that let live
+traffic through (`--allow-live`) makes the run **UNSAFE**, exit code 5, for
+both `run` and `verify`. Neither counts as fixed on the backend. Each web
+replay report carries `evidence: { assertionPassed?, postconditions?,
+failurePointPassed }`.
 
 Each attempt opens a fresh browser context sized like the recording. The CLI
 refuses to start when something already serves `web.url`, because it might be

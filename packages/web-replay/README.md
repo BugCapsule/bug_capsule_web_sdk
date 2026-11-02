@@ -44,7 +44,8 @@ divergences are material: the attempt cannot count as clean.
 
 `--allow-live <url substring>` (repeatable) is an explicit escape hatch: a
 request or WebSocket whose URL contains the substring reaches the real
-network, is logged, and is reported as `replay.unsafe_live`. Any attempt with
-`replay.unsafe_live` is invalid, even if it reproduced the failure, so use it
-only to debug the replay setup. A dev server's live-reload socket is blocked
+network, is logged, and is reported as `replay.unsafe_live`. A run with any
+such attempt is **UNSAFE** (exit code 5), even if it reproduced the failure,
+so use it only to debug the replay setup. Reports also carry the page's
+verdict v2 `evidence` unchanged. A dev server's live-reload socket is blocked
 too; replay against a production-style build.

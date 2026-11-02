@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { gzipSync } from 'node:zlib';
-import { assessAttempt, type ReplayReport } from '../../packages/web/src/core/index.js';
+import { assessAttempt, evaluateRun, type ReplayReport } from '../../packages/web/src/core/index.js';
 import { isStaticLoad, runReplayAttempt } from '../../packages/web-replay/src/index.js';
 import { sdkBundle } from '../browser/harness.js';
 
@@ -190,6 +190,9 @@ describe('replay runner egress (Chromium)', { timeout: 120_000 }, () => {
     const report = await replay();
     assert.equal(report.attemptId, 'att-runner');
     assert.notEqual(report.outcome, 'error', report.message ?? '');
+    // Verdict v2 evidence from the page reaches the CLI unchanged.
+    assert.deepEqual(report.evidence, { failurePointPassed: true });
+    assert.deepEqual(posted[0]!.evidence, report.evidence);
     assert.deepEqual(apiHits(app), [], 'the app origin served no API request');
     assert.deepEqual(app.upgrades, [], 'no WebSocket reached the app');
     assert.deepEqual(canary.hits, [], 'the canary received nothing');
@@ -222,9 +225,10 @@ describe('replay runner egress (Chromium)', { timeout: 120_000 }, () => {
     const live = report.divergences.filter((d) => d.type === 'replay.unsafe_live');
     assert.ok(live.some((d) => d.detail.startsWith('POST fetch') && d.detail.endsWith('/api/live')), JSON.stringify(live));
     assert.ok(lines.some((l) => l.includes('live request (--allow-live): POST fetch')));
-    const a = assessAttempt(report);
-    assert.equal(a.status, 'invalid');
-    assert.deepEqual(a.reasonCodes, ['replay.unsafe_live']);
+    assert.equal(assessAttempt(report).status, 'invalid');
+    const run = evaluateRun('verify', 1, [report]);
+    assert.equal(run.verdict, 'unsafe');
+    assert.equal(run.exitCode, 5);
   });
 
   it('seeds only storage keys the capsule policy allows, and none without a policy (BC-ENT-013)', async () => {
