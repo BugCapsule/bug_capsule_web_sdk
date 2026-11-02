@@ -18,7 +18,7 @@ import {
   type SentryLink,
 } from './core/model.js';
 import { replaySettingsFromJson, type ReplayReport, type ReplaySettings } from './core/protocol.js';
-import { FlightRecorder } from './core/recorder.js';
+import { DEFAULT_RECORDER_MAX_BYTES, FlightRecorder } from './core/recorder.js';
 import { Redactor } from './core/redaction.js';
 import { validateCapsuleDocument } from './core/validator.js';
 import { HistoryIntegration } from './integrations/history.js';
@@ -966,6 +966,13 @@ export class Runtime implements BugCapsuleSession {
     if (recorder.rewriteDropped > 0) {
       eligibility.missing('events.redaction', `${recorder.rewriteDropped} buffered events were dropped when redaction rules changed`);
     }
+    if (recorder.truncated) {
+      const mib = Math.round((recorder.maxBytes / 1024 / 1024) * 10) / 10;
+      eligibility.missing(
+        'capture.truncated',
+        `the recorder kept under its ${mib} MiB budget (maxRecorderBytes) by dropping ${recorder.bodiesDropped} HTTP bodies and ${recorder.bytesEvicted} oldest events`,
+      );
+    }
     if (window.hasGap) {
       eligibility.missing('events.window', 'events between the checkpoint and the window were evicted; raise windowMs or maxEvents');
     }
@@ -1264,7 +1271,7 @@ export class Runtime implements BugCapsuleSession {
   }
 
   private newRecorder(launch: Checkpoint): FlightRecorder {
-    return new FlightRecorder(launch, this.config.maxEvents ?? 20_000, this.config.windowMs ?? 300_000);
+    return new FlightRecorder(launch, this.config.maxEvents ?? 20_000, this.config.windowMs ?? 300_000, 4, this.config.maxRecorderBytes ?? DEFAULT_RECORDER_MAX_BYTES);
   }
 
   // ----------------------------------------------------------------- replay

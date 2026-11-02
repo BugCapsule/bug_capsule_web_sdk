@@ -59,6 +59,12 @@ export interface BugCapsuleConfig {
   checkpointIntervalMs?: number;
   windowMs?: number;
   maxEvents?: number;
+  /**
+   * Budget of event payload the recorder keeps in memory (approximate,
+   * default 8 MiB). Over it, HTTP bodies are dropped oldest first, then the
+   * oldest events; capsules then report `capture.truncated`.
+   */
+  maxRecorderBytes?: number;
   /** Maximum fraction of production sessions that record (default 0.1). The backend can lower it. */
   productionSampleRate?: number;
   autoCaptureOnFailure?: boolean;
