@@ -610,13 +610,14 @@ export class NetworkIntegration implements BugCapsuleIntegration {
     let key: string;
     let occurrence: number;
     let body: RequestBody;
-    const excluded = this.opts.exclude?.({ method: st.method, url: st.url }) ?? false;
+    let excluded: boolean;
     try {
+      excluded = this.opts.exclude?.({ method: st.method, url: st.url }) ?? false;
       body = this.xhrBody(raw, st.headers);
       key = this.keyFor(st.method, st.url, body);
       occurrence = this.nextOccurrence(key);
     } catch {
-      return;
+      return; // a throwing `exclude` or failed keying: not recorded, the request still runs
     }
     let error: Record<string, unknown> | null = null;
     xhr.addEventListener('error', () => (error = this.errorJson('connectionError', 'XMLHttpRequest error')));

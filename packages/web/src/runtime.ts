@@ -29,7 +29,7 @@ import { BackendTransport, configScope, RemoteConfigController, type BugCapsuleT
 import { detectReplayBridge, ReplayEngine, type ReplayBridge } from './replay/engine.js';
 import { openStorage, type SdkStorage } from './storage/idb.js';
 import { saveCapture, UploadOutbox } from './storage/outbox.js';
-import { parseConnectionToken, type ConnectionTokenError } from './connection-token.js';
+import { explicitBackendRefusal, parseConnectionToken, type ConnectionTokenError } from './connection-token.js';
 import type { BugCapsuleConfig, BugCapsuleIntegration, BugCapsuleSession, BugCapsuleStatus, CaptureResult, ReplayContext, UploadResult } from './types.js';
 
 import { SDK_NAME, SDK_VERSION } from './version.js';
@@ -95,7 +95,7 @@ export interface RuntimeOverrides {
   bridge?: ReplayBridge | null;
 }
 
-/** How the backend was configured, and why a token could not be used. */
+/** How the backend was configured, and why a token (or an explicit backend) could not be used. */
 export interface ResolvedConnection {
   source: 'token' | 'backend' | null;
   tokenError: { error: ConnectionTokenError; message: string } | null;
@@ -111,6 +111,12 @@ export function resolveConfig(input: Readonly<BugCapsuleConfig>): { config: BugC
   const config: BugCapsuleConfig = { ...input, appVersion: input.appVersion || releaseVersion || 'unknown', appBuild: input.appBuild || '0' };
   if (input.backend) {
     if (input.token) console.warn('[bugcapsule] both token and backend are set; using backend and ignoring token');
+    const refusal = explicitBackendRefusal(input.backend);
+    if (refusal) {
+      console.error(`[bugcapsule] the backend config can't be used: ${refusal}. The app runs without BugCapsule.`);
+      const { backend: _refused, ...rest } = config;
+      return { config: rest, connection: { source: 'backend', tokenError: { error: 'invalid_token', message: refusal } } };
+    }
     return { config, connection: { source: 'backend', tokenError: null } };
   }
   if (input.token === undefined || input.token === null) return { config, connection: { source: null, tokenError: null } };

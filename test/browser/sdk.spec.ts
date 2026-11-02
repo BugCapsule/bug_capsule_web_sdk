@@ -255,6 +255,50 @@ test('XMLHttpRequest exchanges are captured', async ({ page }) => {
   expect(http.responseBody).toEqual({ a: 1, apiKey: '[REDACTED]' });
 });
 
+test('a throwing exclude callback never breaks XMLHttpRequest.send; the request is left out of the capsule (R-039)', async ({ page }) => {
+  await page.goto(`${ORIGIN}/`);
+  await page.evaluate(
+    async ({ BACKEND, INGEST }) => {
+      const { BugCapsule, networkIntegration } = window.BC;
+      await BugCapsule.init({
+        appVersion: '1.0.0',
+        appBuild: '7',
+        mode: 'qa',
+        backend: { url: BACKEND, ingestKey: INGEST },
+        integrations: [
+          networkIntegration({
+            exclude: () => {
+              throw new Error('app bug in exclude');
+            },
+          }),
+        ],
+      });
+    },
+    { BACKEND, INGEST },
+  );
+  const body = await page.evaluate(
+    (API) =>
+      new Promise<string>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}/echo`);
+        xhr.setRequestHeader('content-type', 'application/json');
+        xhr.onload = () => resolve(xhr.responseText);
+        xhr.onerror = () => reject(new Error('xhr failed'));
+        try {
+          xhr.send(JSON.stringify({ a: 1 }));
+        } catch (e) {
+          reject(e);
+        }
+      }),
+    API,
+  );
+  expect(JSON.parse(body)).toEqual({ a: 1 });
+  await page.evaluate(() => window.BC.BugCapsule.fail('xhr_exclude_throws'));
+  await expect.poll(() => backend.uploads.length).toBe(1);
+  const http = decodeUpload(backend.uploads[0]!).events.filter((e: any) => e.type === 'http');
+  expect(http).toHaveLength(0);
+});
+
 test('production mode samples sessions and never uploads without a fetched config', async ({ page }) => {
   backend.configStatus = 500;
   await page.goto(`${ORIGIN}/`);

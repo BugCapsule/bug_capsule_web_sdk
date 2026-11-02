@@ -34,7 +34,7 @@ export function sentryBundle(): string {
 }
 
 export const ORIGIN = 'http://shop.bc.test';
-export const BACKEND = 'http://backend.bc.test';
+export const BACKEND = 'https://backend.bc.test';
 export const API = 'http://api.bc.test';
 
 export interface BackendState {

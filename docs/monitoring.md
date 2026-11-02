@@ -63,7 +63,7 @@ on other origins listed in `tracePropagationTargets` must allow the
 | `errorSampleRate` | `1` | the lower of this and the backend's; `fatal` and capsule-linked events are always sent |
 | `tracesSampleRate` | `0` | the backend's `tracesSampleRate` replaces it unless `tracesSampler` is set |
 | `tracesSampler(context)` | none | `{name, op, parentSampled?, location?}` → rate or boolean |
-| `tracePropagationTargets` | same origin | substrings, `"/regex/"` strings or RegExps; the backend's list replaces it |
+| `tracePropagationTargets` | same origin | substrings, `"/regex/"` strings or RegExps; the backend's list can only narrow it (plain substrings a URL must also contain) |
 | `enableAutoSessionTracking` | `true` | the backend's `sessionTracking: false` also turns sessions off |
 | `crashOnUnhandled` | `true` | an unhandled error marks the session `crashed` |
 | `maxBreadcrumbs` | `100` | the lower of this and the backend's, at most 100 |
