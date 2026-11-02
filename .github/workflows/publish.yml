@@ -1,0 +1,103 @@
+name: Publish to npm
+# Manual only. Publishes with npm trusted publishing (OIDC, no npm token in
+# the repository) and a signed provenance statement for every package
+# (BC-ENT-043). Each package must have this repository and workflow file
+# (publish.yml) configured as its trusted publisher on npmjs.com.
+#
+# Verify a release afterwards with `npm audit signatures` in a project that
+# installs it.
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: Workspaces to publish, space-separated, in dependency order
+        required: true
+        default: packages/web packages/react packages/web-replay packages/cli packages/emergency-guard
+      dry_run:
+        description: Run every check and `npm publish --dry-run`, publish nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC token for trusted publishing and provenance
+    steps:
+      - name: Refuse anything but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::publish from main only (got ${GITHUB_REF})"
+          exit 1
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11.6.2
+
+      - run: npm ci
+
+      - name: Refuse versions that are already published
+        env:
+          PACKAGES: ${{ inputs.packages }}
+        run: |
+          set -euo pipefail
+          status=0
+          for dir in $PACKAGES; do
+            case "$dir" in
+              packages/web|packages/react|packages/web-replay|packages/cli|packages/emergency-guard) ;;
+              *) echo "::error::unknown workspace $dir"; exit 1 ;;
+            esac
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if out=$(npm view "$name@$version" version --registry https://registry.npmjs.org 2>&1); then
+              if [ -n "$out" ]; then
+                echo "::error::$name@$version is already on npm; bump the version first"
+                status=1
+              else
+                echo "$name@$version is not published yet"
+              fi
+            elif echo "$out" | grep -q E404; then
+              echo "$name is not on npm yet"
+            else
+              echo "::error::could not ask the registry about $name@$version: $out"
+              status=1
+            fi
+          done
+          exit $status
+
+      - run: npx playwright install --with-deps chromium firefox webkit
+
+      # The same gates as release-gates.yml: build, types, bundle size, unit,
+      # runner and browser tests.
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm test
+
+      - name: Publish
+        env:
+          PACKAGES: ${{ inputs.packages }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          flags="--provenance --access public --tag beta"
+          if [ "$DRY_RUN" = "true" ]; then flags="$flags --dry-run"; fi
+          for dir in $PACKAGES; do
+            echo "npm publish -w $dir $flags"
+            npm publish -w "$dir" $flags
+          done
