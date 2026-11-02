@@ -42,6 +42,12 @@ export interface BugCapsuleConfig {
   mode?: CaptureMode;
   /** Local master switch. The backend kill switch can also disable capture. */
   enabled?: boolean;
+  /**
+   * Default of the user's consent switch (`BugCapsule.setCollectionEnabled`)
+   * when they have not made a choice on this device yet. Default true; set
+   * false to collect nothing until the user opts in.
+   */
+  collectionEnabled?: boolean;
   /** Explicit backend URL + ingest key (the pre-token setup, still supported). Wins over `token`. */
   backend?: BugCapsuleBackendConfig;
   /** Commit the build was made from (inject at build time, e.g. `import.meta.env.VITE_BUGCAPSULE_GIT_SHA`). */
@@ -53,6 +59,12 @@ export interface BugCapsuleConfig {
   checkpointIntervalMs?: number;
   windowMs?: number;
   maxEvents?: number;
+  /**
+   * Budget of event payload the recorder keeps in memory (approximate,
+   * default 8 MiB). Over it, HTTP bodies are dropped oldest first, then the
+   * oldest events; capsules then report `capture.truncated`.
+   */
+  maxRecorderBytes?: number;
   /** Maximum fraction of production sessions that record (default 0.1). The backend can lower it. */
   productionSampleRate?: number;
   autoCaptureOnFailure?: boolean;
@@ -156,7 +168,9 @@ export interface BugCapsuleConfig {
  * - `connected`: the config was fetched (basic connectivity);
  * - `offline`: the backend can't be reached; data waits in the outbox and is retried;
  * - `rejected`: the backend refused the credential (`reason`: token_revoked, token_expired, token_unknown, …);
- * - `disabled`: `enabled: false`, or capture switched off by the backend.
+ * - `disabled`: `enabled: false`, collection switched off on this device
+ *   (`setCollectionEnabled(false)`, reason `collection_disabled`), or
+ *   capture switched off by the backend.
  */
 export type ConnectionState = 'not_configured' | 'invalid_token' | 'unsupported_token_version' | 'connecting' | 'connected' | 'offline' | 'rejected' | 'disabled';
 

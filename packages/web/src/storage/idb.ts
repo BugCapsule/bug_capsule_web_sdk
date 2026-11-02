@@ -23,6 +23,8 @@ export interface SdkStorage {
   update<T>(store: StoreName, fn: (records: StoredCapsule[]) => { put?: StoredCapsule[]; remove?: string[]; result: T }): Promise<T>;
   list(store: StoreName): Promise<StoredCapsule[]>;
   remove(store: StoreName, ids: string[]): Promise<void>;
+  /** Deletes records enqueued before `cutoffMs` by key range, without reading them. */
+  removeOlderThan(store: StoreName, cutoffMs: number): Promise<void>;
   getKv<T>(key: string): Promise<T | undefined>;
   setKv(key: string, value: unknown): Promise<void>;
   /**
@@ -32,8 +34,20 @@ export interface SdkStorage {
    */
   tryLease(name: string, owner: string, ttlMs: number, now: number): Promise<boolean>;
   releaseLease(name: string, owner: string): Promise<void>;
+  /**
+   * Deletes everything the SDK keeps (queued capsules and envelopes, saved
+   * captures, cached remote config, retry state) in one transaction. Leases
+   * are kept so a tab uploading right now still holds its lock.
+   */
+  clear(): Promise<void>;
   close(): void;
 }
+
+/** The id prefix of a record enqueued at `ms` (see {@link StoredCapsule.id}). */
+export const idPrefix = (ms: number): string => String(Math.max(0, Math.floor(ms))).padStart(15, '0');
+
+const isLeaseKey = (key: IDBValidKey) => typeof key === 'string' && key.startsWith('lease:');
+const ALL_STORES: StoreName[] = ['outbox', 'captures', 'envelopes'];
 
 interface Lease {
   owner: string;
@@ -104,6 +118,14 @@ class IdbStorage implements SdkStorage {
     await completed;
   }
 
+  async removeOlderThan(store: StoreName, cutoffMs: number): Promise<void> {
+    const tx = this.db.transaction(store, 'readwrite');
+    const completed = done(tx);
+    // Ids start with the zero-padded enqueue time, so key order is age order.
+    tx.objectStore(store).delete(IDBKeyRange.upperBound(idPrefix(cutoffMs), true));
+    await completed;
+  }
+
   async getKv<T>(key: string): Promise<T | undefined> {
     const tx = this.db.transaction('kv', 'readonly');
     return (await request(tx.objectStore('kv').get(key))) as T | undefined;
@@ -136,6 +158,15 @@ class IdbStorage implements SdkStorage {
     await completed;
   }
 
+  async clear(): Promise<void> {
+    const tx = this.db.transaction([...ALL_STORES, 'kv'], 'readwrite');
+    const completed = done(tx);
+    for (const store of ALL_STORES) tx.objectStore(store).clear();
+    const kv = tx.objectStore('kv');
+    for (const key of await request(kv.getAllKeys())) if (!isLeaseKey(key)) kv.delete(key);
+    await completed;
+  }
+
   close(): void {
     this.db.close();
   }
@@ -164,6 +195,10 @@ export class MemoryStorage implements SdkStorage {
   async remove(store: StoreName, ids: string[]): Promise<void> {
     for (const id of ids) this.stores[store].delete(id);
   }
+  async removeOlderThan(store: StoreName, cutoffMs: number): Promise<void> {
+    const bound = idPrefix(cutoffMs);
+    for (const id of [...this.stores[store].keys()]) if (id < bound) this.stores[store].delete(id);
+  }
   async getKv<T>(key: string): Promise<T | undefined> {
     return structuredCloneSafe(this.kv.get(key)) as T | undefined;
   }
@@ -178,6 +213,10 @@ export class MemoryStorage implements SdkStorage {
   }
   async releaseLease(name: string, owner: string): Promise<void> {
     if ((this.kv.get(`lease:${name}`) as Lease | undefined)?.owner === owner) this.kv.delete(`lease:${name}`);
+  }
+  async clear(): Promise<void> {
+    for (const store of ALL_STORES) this.stores[store].clear();
+    for (const key of [...this.kv.keys()]) if (!isLeaseKey(key)) this.kv.delete(key);
   }
   close(): void {}
 }

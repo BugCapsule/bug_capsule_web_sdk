@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { readdir, readFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -50,14 +50,75 @@ export async function findBundles(inputs: string[]): Promise<string[]> {
   return out;
 }
 
-/** The source map of a bundle: its `sourceMappingURL` (a relative file) or `<bundle>.map`. */
-export function mapPathFor(file: string, js: string): string | null {
+/** The directory an input stands for: itself, or the directory of a single bundle. */
+export async function inputRoot(input: string): Promise<string> {
+  const abs = path.resolve(input);
+  return (await stat(abs)).isDirectory() ? abs : path.dirname(abs);
+}
+
+export interface MapResolution {
+  /** The source map to read, or null when there is none (or it was rejected). */
+  map: string | null;
+  /** Why the bundle's `sourceMappingURL` was not followed; null when it was fine or absent. */
+  rejected: string | null;
+}
+
+function within(root: string, target: string): boolean {
+  const rel = path.relative(root, target);
+  return rel !== '' && !rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel);
+}
+
+/**
+ * Checks a candidate map: it must be a `.map` file whose real path (symlinks
+ * resolved) lies inside the real input root. Returns the reason it fails.
+ */
+function checkMap(candidate: string, root: string): string | null {
+  if (!candidate.endsWith('.map')) return 'is not a .map file';
+  let real: string;
+  let realRoot: string;
+  try {
+    real = realpathSync(candidate);
+    realRoot = realpathSync(root);
+  } catch {
+    return 'cannot be resolved';
+  }
+  if (!real.endsWith('.map')) return 'links to a file that is not a .map file';
+  if (!within(realRoot, real)) return 'is outside the input directory';
+  return null;
+}
+
+/**
+ * The source map of a bundle: its `sourceMappingURL` (a relative file) or
+ * `<bundle>.map`. Only `.map` files inside `root` (after resolving symlinks)
+ * are accepted, so a hostile or broken bundle cannot make the CLI read or
+ * upload `../../.env` or an absolute path. `data:` and remote URLs are left
+ * alone, as before.
+ */
+export function resolveMap(file: string, js: string, root: string = path.dirname(file)): MapResolution {
   const url = MAPPING_URL.exec(js)?.[1];
   if (url && !url.startsWith('data:') && !/^[a-z]+:\/\//i.test(url)) {
-    const candidate = path.resolve(path.dirname(file), decodeURIComponent(url.split(/[?#]/)[0]!));
-    if (existsSync(candidate)) return candidate;
+    let decoded: string | null;
+    try {
+      decoded = decodeURIComponent(url.split(/[?#]/)[0]!);
+    } catch {
+      decoded = null;
+    }
+    if (decoded === null) return { map: null, rejected: `sourceMappingURL ${JSON.stringify(url)} is not a valid URL` };
+    const candidate = path.resolve(path.dirname(file), decoded);
+    if (existsSync(candidate)) {
+      const reason = checkMap(candidate, root);
+      return reason ? { map: null, rejected: `sourceMappingURL ${JSON.stringify(url)} ${reason}` } : { map: candidate, rejected: null };
+    }
   }
-  return existsSync(`${file}.map`) ? `${file}.map` : null;
+  const sibling = `${file}.map`;
+  if (!existsSync(sibling)) return { map: null, rejected: null };
+  const reason = checkMap(sibling, root);
+  return reason ? { map: null, rejected: `${path.basename(sibling)} ${reason}` } : { map: sibling, rejected: null };
+}
+
+/** The accepted source map of a bundle, or null (see {@link resolveMap}). */
+export function mapPathFor(file: string, js: string, root?: string): string | null {
+  return resolveMap(file, js, root).map;
 }
 
 export interface InjectResult {
@@ -66,15 +127,17 @@ export interface InjectResult {
   debugId: string;
   /** False when the bundle already had a debug id. */
   changed: boolean;
+  /** Why the bundle's source map was not used (see {@link resolveMap}). */
+  rejected: string | null;
 }
 
 /**
  * monitoring-v1 §3: writes `//# debugId=<id>` and the registration snippet
  * into the bundle and `"debugId"` into its source map. Idempotent.
  */
-export async function injectFile(file: string, options: { dryRun?: boolean } = {}): Promise<InjectResult> {
+export async function injectFile(file: string, options: { dryRun?: boolean; root?: string } = {}): Promise<InjectResult> {
   const js = await readFile(file, 'utf8');
-  const map = mapPathFor(file, js);
+  const { map, rejected } = resolveMap(file, js, options.root);
   const existing = readDebugId(js);
   const debugId = existing ?? debugIdFromContent(js);
   let changed = false;
@@ -96,7 +159,7 @@ export async function injectFile(file: string, options: { dryRun?: boolean } = {
       changed = true;
     }
   }
-  return { file, map, debugId, changed };
+  return { file, map, debugId, changed, rejected };
 }
 
 export interface UploadOptions {
@@ -159,12 +222,16 @@ export async function uploadSourcemaps(inputs: string[], opts: UploadOptions): P
   const prefix = opts.urlPrefix ?? '~/';
   const uploaded: UploadedFile[] = [];
   for (const input of inputs) {
-    const root = (await stat(input)).isDirectory() ? path.resolve(input) : path.dirname(path.resolve(input));
+    const root = await inputRoot(input);
     for (const file of await findBundles([input])) {
       const js = await readFile(file);
       const text = js.toString('utf8');
-      const map = mapPathFor(file, text);
+      const { map, rejected } = resolveMap(file, text, root);
       const debugId = readDebugId(text);
+      if (rejected) {
+        log(`skip ${path.relative(root, file)}: ${rejected}`);
+        continue;
+      }
       if (!map) {
         log(`skip ${path.relative(root, file)}: no source map`);
         continue;
