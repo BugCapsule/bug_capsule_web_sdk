@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -8,7 +8,7 @@ import { after, describe, it } from 'node:test';
 import vm from 'node:vm';
 import { gunzipSync } from 'node:zlib';
 import { main } from '../../packages/cli/src/index.js';
-import { debugIdFromContent, injectFile, readDebugId } from '../../packages/cli/src/sourcemaps.js';
+import { debugIdFromContent, injectFile, readDebugId, resolveMap } from '../../packages/cli/src/sourcemaps.js';
 import { debugIdsByScript } from '../../packages/web/src/monitoring/debug-ids.js';
 
 const dirs: string[] = [];
@@ -137,5 +137,97 @@ describe('sourcemaps upload', () => {
     }) as unknown as typeof fetch;
     assert.equal(await main(['sourcemaps', 'upload', dir, '--url', 'http://x', '--release', 'r', '--dry-run'], { ...quiet, env: {}, fetch: fetchSpy }), 0);
     assert.equal(called, false);
+  });
+});
+
+describe('sourcemaps: the map must be a .map file inside the input directory (BC-ENT-033)', () => {
+  /** `<tmp>/secret.env` + `<tmp>/outside.map` beside the build dir `<tmp>/dist`. */
+  function hostile(mappingUrl: string): { dir: string; dist: string; js: string } {
+    const dir = mkdtempSync(path.join(tmpdir(), 'bc-cli-evil-'));
+    dirs.push(dir);
+    const dist = path.join(dir, 'dist');
+    mkdirSync(path.join(dist, 'assets'), { recursive: true });
+    writeFileSync(path.join(dir, 'secret.env'), 'BUGCAPSULE_SECRET_KEY=bcs_do_not_leak\n');
+    writeFileSync(path.join(dir, 'outside.map'), JSON.stringify({ version: 3, sources: [], names: [], mappings: '' }));
+    const js = path.join(dist, 'assets', 'app.js');
+    writeFileSync(js, `console.log(1);\n//# sourceMappingURL=${mappingUrl}\n`);
+    return { dir, dist, js };
+  }
+
+  async function uploadNames(dist: string): Promise<{ names: string[]; bodies: string[]; log: string }> {
+    const names: string[] = [];
+    const bodies: string[] = [];
+    const lines: string[] = [];
+    const fetchSpy = (async (url: string, init: RequestInit) => {
+      names.push(new URL(url).searchParams.get('name')!);
+      bodies.push(gunzipSync(init.body as Uint8Array).toString());
+      return new Response('{}', { status: 201 });
+    }) as unknown as typeof fetch;
+    const code = await main(['sourcemaps', 'upload', dist, '--url', 'http://x', '--release', 'r'], { out: (s) => lines.push(s), err: (s) => lines.push(s), env: { BUGCAPSULE_SECRET_KEY: 'bcs_x' }, fetch: fetchSpy });
+    assert.equal(code, 0);
+    return { names, bodies, log: lines.join('') };
+  }
+
+  it('rejects ../ traversal out of the root, and a non-.map target', async () => {
+    const { dist, js } = hostile('../../secret.env');
+    const r = resolveMap(js, readFileSync(js, 'utf8'), dist);
+    assert.equal(r.map, null);
+    assert.match(r.rejected!, /not a \.map file/);
+    const up = await uploadNames(dist);
+    assert.deepEqual(up.names, []);
+    assert.ok(!up.bodies.some((b) => b.includes('bcs_do_not_leak')));
+    assert.match(up.log, /skip assets\/app\.js: sourceMappingURL "\.\.\/\.\.\/secret\.env" is not a \.map file/);
+  });
+
+  it('rejects a .map that is outside the root, by ../ or by absolute path', async () => {
+    const rel = hostile('../../outside.map');
+    assert.match(resolveMap(rel.js, readFileSync(rel.js, 'utf8'), rel.dist).rejected!, /outside the input directory/);
+    assert.deepEqual((await uploadNames(rel.dist)).names, []);
+    const abs = hostile('PLACEHOLDER');
+    writeFileSync(abs.js, `console.log(1);\n//# sourceMappingURL=${path.join(abs.dir, 'outside.map')}\n`);
+    assert.match(resolveMap(abs.js, readFileSync(abs.js, 'utf8'), abs.dist).rejected!, /outside the input directory/);
+    const up = await uploadNames(abs.dist);
+    assert.deepEqual(up.names, []);
+    assert.match(up.log, /outside the input directory/);
+  });
+
+  it('rejects a symlink inside the root that points out of it', async () => {
+    const { dir, dist, js } = hostile('app.js.map');
+    symlinkSync(path.join(dir, 'outside.map'), path.join(dist, 'assets', 'app.js.map'));
+    assert.match(resolveMap(js, readFileSync(js, 'utf8'), dist).rejected!, /outside the input directory/);
+    const env = hostile('leak.map');
+    symlinkSync(path.join(env.dir, 'secret.env'), path.join(env.dist, 'assets', 'leak.map'));
+    assert.match(resolveMap(env.js, readFileSync(env.js, 'utf8'), env.dist).rejected!, /not a \.map file/);
+    assert.deepEqual((await uploadNames(env.dist)).names, []);
+  });
+
+  it('inject does not rewrite a map outside the root', async () => {
+    const { dir, dist } = hostile('../../outside.map');
+    const before = readFileSync(path.join(dir, 'outside.map'), 'utf8');
+    const lines: string[] = [];
+    assert.equal(await main(['sourcemaps', 'inject', dist], { out: (s) => lines.push(s), err: () => {} }), 0);
+    assert.equal(readFileSync(path.join(dir, 'outside.map'), 'utf8'), before);
+    assert.match(lines.join(''), /source map skipped: sourceMappingURL .* outside the input directory/);
+  });
+
+  it('accepts maps in subdirectories of the root and leaves data: URLs alone', async () => {
+    const { dist, js } = hostile('maps/app.js.map');
+    mkdirSync(path.join(dist, 'assets', 'maps'));
+    writeFileSync(path.join(dist, 'assets', 'maps', 'app.js.map'), JSON.stringify({ version: 3, sources: [], names: [], mappings: '' }));
+    assert.deepEqual(resolveMap(js, readFileSync(js, 'utf8'), dist), { map: path.join(dist, 'assets', 'maps', 'app.js.map'), rejected: null });
+    const inline = hostile('data:application/json;base64,eyJ2ZXJzaW9uIjozfQ==');
+    assert.deepEqual(resolveMap(inline.js, readFileSync(inline.js, 'utf8'), inline.dist), { map: null, rejected: null });
+    writeFileSync(`${inline.js}.map`, '{"version":3,"sources":[],"names":[],"mappings":""}');
+    assert.deepEqual(resolveMap(inline.js, readFileSync(inline.js, 'utf8'), inline.dist), { map: `${inline.js}.map`, rejected: null });
+  });
+
+  it('--key still works but warns to use the environment variable', async () => {
+    const dir = build();
+    const errors: string[] = [];
+    assert.equal(await main(['sourcemaps', 'upload', dir, '--url', 'http://x', '--key', 'bcs_x', '--dry-run'], { out: () => {}, err: (s) => errors.push(s), env: {} }), 0);
+    assert.match(errors.join(''), /warning: --key .* BUGCAPSULE_SECRET_KEY/);
+    const quietErrors: string[] = [];
+    assert.equal(await main(['sourcemaps', 'upload', dir, '--url', 'http://x', '--dry-run'], { out: () => {}, err: (s) => quietErrors.push(s), env: { BUGCAPSULE_SECRET_KEY: 'bcs_x' } }), 0);
+    assert.deepEqual(quietErrors, []);
   });
 });
