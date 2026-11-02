@@ -106,6 +106,7 @@ test('captures a failure with redacted network, input and pointer events, then u
   expect(ls['shop.cart']).toBe('[1]');
   expect(ls['shop.authToken']).toBe('[REDACTED]');
   expect(ls['other.key']).toBeUndefined();
+  expect(m.storagePolicy).toEqual({ local_storage: { allowPrefixes: ['shop.'], denyPrefixes: [] } });
   expect(doc.checkpoint.data.history.location).toBe('/cart?coupon=SAVE10&token=[REDACTED]');
   expect(byType('failure')).toHaveLength(1);
   expect(byType('failure')[0].data.stack).toBeUndefined();
@@ -255,6 +256,50 @@ test('XMLHttpRequest exchanges are captured', async ({ page }) => {
   expect(http.responseBody).toEqual({ a: 1, apiKey: '[REDACTED]' });
 });
 
+test('a throwing exclude callback never breaks XMLHttpRequest.send; the request is left out of the capsule (R-039)', async ({ page }) => {
+  await page.goto(`${ORIGIN}/`);
+  await page.evaluate(
+    async ({ BACKEND, INGEST }) => {
+      const { BugCapsule, networkIntegration } = window.BC;
+      await BugCapsule.init({
+        appVersion: '1.0.0',
+        appBuild: '7',
+        mode: 'qa',
+        backend: { url: BACKEND, ingestKey: INGEST },
+        integrations: [
+          networkIntegration({
+            exclude: () => {
+              throw new Error('app bug in exclude');
+            },
+          }),
+        ],
+      });
+    },
+    { BACKEND, INGEST },
+  );
+  const body = await page.evaluate(
+    (API) =>
+      new Promise<string>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API}/echo`);
+        xhr.setRequestHeader('content-type', 'application/json');
+        xhr.onload = () => resolve(xhr.responseText);
+        xhr.onerror = () => reject(new Error('xhr failed'));
+        try {
+          xhr.send(JSON.stringify({ a: 1 }));
+        } catch (e) {
+          reject(e);
+        }
+      }),
+    API,
+  );
+  expect(JSON.parse(body)).toEqual({ a: 1 });
+  await page.evaluate(() => window.BC.BugCapsule.fail('xhr_exclude_throws'));
+  await expect.poll(() => backend.uploads.length).toBe(1);
+  const http = decodeUpload(backend.uploads[0]!).events.filter((e: any) => e.type === 'http');
+  expect(http).toHaveLength(0);
+});
+
 test('production mode samples sessions and never uploads without a fetched config', async ({ page }) => {
   backend.configStatus = 500;
   await page.goto(`${ORIGIN}/`);
@@ -351,6 +396,22 @@ test('replay reproduces a captured failure in the real page code', async ({ page
   expect(r.divergences.filter((d: any) => !['network.unused', 'build.gitSha'].includes(d.type))).toEqual([]);
   expect(apiHits).toBe(0); // served from the capsule, never the network
   expect(await replayPage.evaluate(() => (window as any).__legacy)).toBe('v0.9');
+});
+
+test('replay restores only keys the storage policy allows; a disallowed key in the capsule is reported, not written', async ({ page, context }) => {
+  const capsule = await captureCheckoutCapsule(page);
+  capsule.checkpoint.data.local_storage['other.injected'] = 'from the capsule';
+  const replayPage = await context.newPage();
+  const bridge = await withBridge(replayPage, capsule);
+  await replayPage.route(`${API}/**`, (r) => r.abort());
+  await replayPage.goto(`${ORIGIN}/`);
+  await replayPage.evaluate(() => localStorage.clear());
+  await init(replayPage, { allowReplay: true });
+  expect(await replayPage.evaluate(() => localStorage.getItem('shop.legacy'))).toBe('v0.9');
+  expect(await replayPage.evaluate(() => localStorage.getItem('other.injected'))).toBeNull();
+  await installApp(replayPage);
+  await expect.poll(() => bridge.reports.length, { timeout: 15_000 }).toBe(1);
+  expect(bridge.reports[0].divergences).toContainEqual({ type: 'restore.disallowed', detail: 'local_storage.other.injected' });
 });
 
 test('semantic replay invokes registered actions; a fix makes the attempt clean', async ({ page, context }) => {

@@ -26,7 +26,18 @@ function normalizeApiUrl(api: unknown): string | null {
     return null;
   }
   if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password || u.search || u.hash) return null;
+  if (u.protocol === 'http:' && !isLocalDevelopmentHost(u.hostname)) return null;
   return api.replace(/\/+$/, '');
+}
+
+/**
+ * Hosts plain http may reach: loopback, and the Android emulator's alias for
+ * the development machine. Anything else must be https, because the
+ * credential travels in every request.
+ */
+function isLocalDevelopmentHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === 'localhost' || h === '[::1]' || h === '::1' || h === '10.0.2.2' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
 }
 
 /** Resolves the credential and API URL. Throws InvalidCredentialError; messages never contain the credential. */
@@ -53,7 +64,7 @@ export function resolveCredential(credential: string, apiUrl: string | undefined
     const p = payload as { api?: unknown; key?: unknown };
     if (typeof p.key !== 'string' || !KEY_RE.test(p.key)) return bad('the connection token has no valid ingest credential; generate a new token');
     tokenApi = normalizeApiUrl(p.api);
-    if (!tokenApi) return bad('the connection token has no valid API URL; generate a new token');
+    if (!tokenApi) return bad('the connection token has no valid https API URL; generate a new token');
     key = p.key;
   } else if (KEY_RE.test(c)) {
     key = c;
@@ -63,7 +74,7 @@ export function resolveCredential(credential: string, apiUrl: string | undefined
   let api = tokenApi;
   if (apiUrl !== undefined) {
     api = normalizeApiUrl(apiUrl);
-    if (!api) return bad('apiUrl must be an http(s) URL without credentials, query or fragment');
+    if (!api) return bad('apiUrl must be an https URL (http only to localhost or 127.0.0.1) without credentials, query or fragment');
   }
   if (!api) return bad('apiUrl is required when the credential is an ingest key');
   return { apiUrl: api, key };

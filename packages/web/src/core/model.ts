@@ -133,7 +133,47 @@ export interface Manifest {
   links?: CapsuleLinks;
   /** Interaction dependencies (capsule-v2 §2). A capsule with any is written as spec v2. */
   dependencies?: CapsuleDependency[];
+  /**
+   * Key policy of the storage integrations at capture time, by checkpoint
+   * key (`local_storage`, `session_storage`). Replay seeds only keys this
+   * policy allows; a capsule without it seeds no storage.
+   */
+  storagePolicy?: Partial<Record<StorageArea, StoragePolicy>>;
   [k: string]: unknown;
+}
+
+/** Checkpoint keys of the web storage integrations. */
+export type StorageArea = 'local_storage' | 'session_storage';
+
+/** Which storage keys an integration captures and restores. */
+export interface StoragePolicy {
+  /** Only keys starting with one of these. */
+  allowPrefixes: string[];
+  /** Wins over `allowPrefixes`. */
+  denyPrefixes?: string[];
+}
+
+/** Whether `key` is covered by `policy` (allowlisted and not denied). No policy allows nothing. */
+export function storageKeyAllowed(policy: StoragePolicy | null | undefined, key: string): boolean {
+  if (!policy) return false;
+  return policy.allowPrefixes.some((p) => key.startsWith(p)) && !(policy.denyPrefixes ?? []).some((p) => key.startsWith(p));
+}
+
+/**
+ * The entries of a checkpoint's storage snapshot that replay may seed: string
+ * values whose key the capsule's own `storagePolicy` allows. Everything else
+ * is returned in `skipped` (to be reported, never written).
+ */
+export function storageSeed(manifest: Pick<Manifest, 'storagePolicy'>, area: StorageArea, data: unknown): { seed: Record<string, string>; skipped: string[] } {
+  const seed: Record<string, string> = {};
+  const skipped: string[] = [];
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) return { seed, skipped };
+  const policy = manifest.storagePolicy?.[area];
+  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+    if (typeof value === 'string' && storageKeyAllowed(policy, key)) seed[key] = value;
+    else skipped.push(key);
+  }
+  return { seed, skipped };
 }
 
 export interface Capsule {

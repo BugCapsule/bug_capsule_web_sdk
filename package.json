@@ -14,8 +14,9 @@
   "scripts": {
     "build": "npm run build -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay -w @bugcapsule/cli -w @bugcapsule/emergency-guard",
     "typecheck": "npm run typecheck -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay -w @bugcapsule/cli -w @bugcapsule/emergency-guard",
-    "test": "npm run test:unit && npm run test:browser",
+    "test": "npm run test:unit && npm run test:runner && npm run test:browser",
     "test:unit": "node --import tsx --test 'test/unit/**/*.test.ts'",
+    "test:runner": "node --import tsx --test 'test/replay-runner/*.test.ts'",
     "test:browser": "playwright test -c test/browser/playwright.config.ts",
     "pack:all": "mkdir -p dist-packages && npm pack -w @bugcapsule/web -w @bugcapsule/react -w @bugcapsule/web-replay -w @bugcapsule/cli -w @bugcapsule/emergency-guard --pack-destination dist-packages",
     "test:e2e:emergency-guard": "node --import tsx --test 'test/e2e/emergency-guard.e2e.test.ts'"

@@ -23,8 +23,28 @@ export class Redactor {
     'proxy-authorization',
     'x-api-key',
     'x-auth-token',
+    'x-session',
+    'authentication',
   ]);
-  private static readonly exactKeys = new Set(['pin', 'pan', 'otp', 'ssn', 'cvv', 'cvc', 'passcode', 'iban']);
+  private static readonly exactKeys = new Set([
+    'pin',
+    'pan',
+    'otp',
+    'ssn',
+    'cvv',
+    'cvc',
+    'passcode',
+    'iban',
+    // Exact names only (after dropping _ - . and spaces), so 'author',
+    // 'accessibility' or 'passenger' stay readable. 'auth', 'sid' and
+    // 'session' are sensitive in URLs and form bodies (exactQueryKeys) but
+    // not as JSON keys: the shared conformance fixture pins that.
+    'pwd',
+    'pass',
+    'csrf',
+    'refresh',
+    'access',
+  ]);
   private static readonly substringKeys = [
     'password',
     'passwd',
@@ -148,12 +168,26 @@ export class Redactor {
     return [scrubbed, scrubbed !== value];
   }
 
+  /**
+   * Fields of an `application/x-www-form-urlencoded` body. Form fields are
+   * URL parameters, so names use the query list ({@link isSensitiveQueryKey}:
+   * also `code`, `sid`, `session`, `auth`, signatures); values are redacted
+   * like JSON strings.
+   */
+  redactForm(fields: Record<string, string>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      out[key] = this.isSensitiveQueryKey(key) ? Redactor.placeholder : this.redact(value, 1)[0];
+    }
+    return out;
+  }
+
   // ------------------------------------------------------------ free text
 
   private static readonly authScheme = /\b(Bearer|Basic|Token|Digest)\s+[A-Za-z0-9\-._~+/]{6,}=*/gi;
   private static readonly jwt = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
   private static readonly knownKeys =
-    /\b(?:(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|bc[is]_[A-Za-z0-9_-]{20,})/g;
+    /\b(?:(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|bc(?:[isawpvt]|pd)_[A-Za-z0-9_-]{20,}|bcsdk\.v[0-9]+\.[A-Za-z0-9_-]{20,})/g;
   private static readonly quotedPair = /(["'])([^"'\\]{1,100})\1(\s*[:=]\s*)(["'])((?:[^"'\\]|\\.)*)\4/g;
   private static readonly equalsPair = /(?<![A-Za-z0-9_\-.[\]])([A-Za-z0-9_\-.[\]]{1,100})=([^&\s"'#;,)<>]+)/g;
   private static readonly colonPair = /(?<![A-Za-z0-9_\-.])([A-Za-z0-9_\-.]{2,100})(\s*:\s*)([^,\s}{\][]+)/g;

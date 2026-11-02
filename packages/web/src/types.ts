@@ -9,7 +9,7 @@ import type { PropagationTarget, TracesSampler } from './monitoring/tracing.js';
 import type { Breadcrumb, EventHint, EventPayload, MonitorHooks, TransactionPayload } from './monitoring/types.js';
 
 export interface BugCapsuleBackendConfig {
-  /** e.g. `http://127.0.0.1:8787` locally, `https://bugcapsule.example.com` hosted. */
+  /** e.g. `http://127.0.0.1:8787` locally, `https://bugcapsule.example.com` hosted. Plain http is refused except to localhost / 127.0.0.0/8 / [::1] / 10.0.2.2. */
   url: string;
   /** Project ingest key (`bci_…`). Upload-only and safe to ship. Never put a `bcs_` secret key in a web app. */
   ingestKey: string;
@@ -57,6 +57,12 @@ export interface BugCapsuleConfig {
   productionSampleRate?: number;
   autoCaptureOnFailure?: boolean;
   maxCapsulesPerSession?: number;
+  /**
+   * Record request/response bodies (redacted). Default: off in `production`
+   * mode, on in `debug` and `qa`. The backend's remote config can turn
+   * bodies off, never on. Binary bodies also need `captureBinaryBodies` on
+   * the network integration.
+   */
   captureNetworkBodies?: boolean;
   /** Default 256 KiB. */
   maxBodyBytes?: number;

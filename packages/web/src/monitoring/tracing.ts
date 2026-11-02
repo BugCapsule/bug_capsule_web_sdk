@@ -379,9 +379,18 @@ export function compileTargets(targets: readonly PropagationTarget[]): (string |
 
 /**
  * Whether `url` gets `traceparent`/`baggage`: null targets mean same
- * origin as the page (monitoring-v1 §8 web default).
+ * origin as the page (monitoring-v1 §8 web default). `narrowedBy` (the
+ * server's list) can only remove destinations: the URL must also contain
+ * one of its entries. They are plain substrings, never patterns, so a
+ * server can't add hosts or run a regex on every request URL.
  */
-export function shouldPropagate(url: string, targets: readonly (string | RegExp)[] | null, pageOrigin: string | null): boolean {
+export function shouldPropagate(
+  url: string,
+  targets: readonly (string | RegExp)[] | null,
+  pageOrigin: string | null,
+  narrowedBy: readonly string[] | null = null,
+): boolean {
+  if (narrowedBy !== null && !narrowedBy.some((t) => url.includes(t))) return false;
   if (targets === null) {
     if (!pageOrigin) return false;
     try {

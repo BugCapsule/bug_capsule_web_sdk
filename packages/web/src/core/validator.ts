@@ -236,6 +236,21 @@ function validate(root: unknown): void {
     }
   }
 
+  const storagePolicy = optObject(m, 'storagePolicy', mp);
+  if (storagePolicy) {
+    for (const [area, raw] of Object.entries(storagePolicy)) {
+      const path = `${mp}.storagePolicy.${area}`;
+      const policy = object(raw, path);
+      for (const k of ['allowPrefixes', 'denyPrefixes']) {
+        if (k === 'denyPrefixes' && (policy[k] === undefined || policy[k] === null)) continue;
+        const list = array(policy[k], `${path}.${k}`, CapsuleLimits.maxRedactionKeys);
+        list.forEach((v, i) => {
+          if (typeof v !== 'string' || v.length > 200) fail(`${path}.${k}[${i}]`, 'must be a string of at most 200 characters');
+        });
+      }
+    }
+  }
+
   const runtime = optObject(m, 'runtime', mp);
   if (runtime) {
     const rp = `${mp}.runtime`;
