@@ -1,4 +1,7 @@
 import { Runtime, type RuntimeOverrides } from './runtime.js';
+import { readConsent, writeConsent } from './consent.js';
+import { openStorage, type SdkStorage } from './storage/idb.js';
+import { purgeCollected } from './storage/outbox.js';
 import { postconditions } from './replay/engine.js';
 import type { StateSerializer } from './integrations/state.js';
 import { FeedbackWidget, type FeedbackWidgetOptions } from './monitoring/feedback-widget.js';
@@ -241,8 +244,48 @@ export const BugCapsule = {
     return rt?.pendingUploads() ?? 0;
   },
 
+  /** Saved captures, newest first (the newest 20, none older than 7 days). */
   async savedCaptures(): Promise<{ capsuleId: string; savedAt: number; bytes: Uint8Array }[]> {
     return rt?.savedCaptures() ?? [];
+  },
+
+  // ------------------------------------------------------ local data lifecycle
+
+  /**
+   * Whether this device collects anything: the user's persisted choice
+   * ({@link setCollectionEnabled}), else `collectionEnabled` from the config
+   * (default true). Before `init`, `options.storageName` picks the database
+   * the choice belongs to (default `bugcapsule`).
+   */
+  collectionEnabled(options: { storageName?: string } = {}): boolean {
+    return rt ? rt.collectionEnabled : (readConsent(options.storageName) ?? true);
+  },
+
+  /**
+   * The consent switch, persisted in localStorage (for the page only when
+   * storage is blocked). `false`: recording and monitoring stop, nothing is
+   * uploaded, and queued capsules, queued events and saved captures are
+   * deleted. `true`: capture starts now when this page started with
+   * collection off; after switching off in this page session it resumes on
+   * the next page load. Can be called before `init` (pass the same
+   * `storageName` as the config, if you set one).
+   */
+  async setCollectionEnabled(enabled: boolean, options: { storageName?: string } = {}): Promise<void> {
+    if (rt) return rt.setCollectionEnabled(enabled);
+    writeConsent(enabled, options.storageName);
+    if (!enabled) await withStorage(options.storageName, purgeCollected);
+  },
+
+  /**
+   * Deletes everything the SDK stored on this device: queued capsules and
+   * events, saved captures, cached remote config and retry state (IndexedDB),
+   * plus this page's in-memory event buffer and breadcrumbs. The consent
+   * choice is kept. Can be called before `init` (pass the same
+   * `storageName` as the config, if you set one).
+   */
+  async clearLocalData(options: { storageName?: string } = {}): Promise<void> {
+    if (rt) return rt.clearLocalData();
+    await withStorage(options.storageName, (s) => s.clear());
   },
 
   // ------------------------------------------------------------ monitoring
@@ -412,6 +455,15 @@ export const BugCapsule = {
     postconditions.clear();
   },
 };
+
+async function withStorage(storageName: string | undefined, fn: (storage: SdkStorage) => Promise<void>): Promise<void> {
+  const storage = testOverrides?.storage ?? (await openStorage(storageName ?? 'bugcapsule'));
+  try {
+    await fn(storage);
+  } finally {
+    if (storage !== testOverrides?.storage) storage.close();
+  }
+}
 
 function isSensitiveElement(el: Element, selector = '[data-bugcapsule-sensitive]'): boolean {
   if (el instanceof HTMLInputElement && el.type === 'password') return true;

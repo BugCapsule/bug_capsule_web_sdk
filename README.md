@@ -433,6 +433,38 @@ credential (names, emails, addresses) or secrets in URL paths. Inspect real
 capsules with `bugcapsule inspect` before a wider rollout. More:
 [Privacy and redaction](https://docs.bugcapsule.com/privacy.html).
 
+### Consent and local data
+
+```ts
+// Collect nothing until the user agrees:
+await BugCapsule.init({ token: 'bcsdk.v1.…', collectionEnabled: false });
+
+consentBanner.onAccept(() => BugCapsule.setCollectionEnabled(true));
+privacySettings.onWithdraw(() => BugCapsule.setCollectionEnabled(false));
+privacySettings.onErase(() => BugCapsule.clearLocalData());
+```
+
+- `setCollectionEnabled(false)` stops recording and monitoring at once,
+  uploads nothing more, and deletes queued capsules, queued events and saved
+  captures. While it is off, the SDK does not contact the backend at all.
+- `setCollectionEnabled(true)` starts capture right away when the page
+  started with collection off. After a withdrawal in the same page session it
+  takes effect on the next page load.
+- The choice is stored in `localStorage` (`bugcapsule:<storageName>:collectionEnabled`)
+  and wins over `collectionEnabled` in the config, which is only the default
+  for a device where no choice was made (default `true`). If `localStorage`
+  is blocked, the choice lasts for the page only.
+- `clearLocalData()` deletes everything the SDK stored on the device
+  (IndexedDB: queued capsules and events, saved captures, the cached project
+  settings and retry state) and the current page's event buffer and
+  breadcrumbs. Recording, if on, continues from a fresh start. The consent
+  choice is kept.
+- Both work before `init`. Pass `{ storageName }` if your config sets one.
+- `BugCapsule.collectionEnabled()` reports the current choice; `status()`
+  shows `disabled` with reason `collection_disabled` while it is off.
+- Saved captures (`savedCaptures()`, for in-app QA tools) keep the newest 20
+  and are deleted after 7 days.
+
 ## Going to production
 
 - Use `mode: 'production'` with a deliberate `productionSampleRate` (default `0.1`).

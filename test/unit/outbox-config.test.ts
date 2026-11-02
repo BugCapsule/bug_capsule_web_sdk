@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { MemoryStorage } from '../../packages/web/src/storage/idb.js';
-import { UploadOutbox, saveCapture, MAX_SAVED_CAPTURES } from '../../packages/web/src/storage/outbox.js';
+import { UploadOutbox, saveCapture, MAX_SAVED_CAPTURES, SAVED_CAPTURE_MAX_AGE_MS, expireSavedCaptures, liveCaptures, purgeCollected } from '../../packages/web/src/storage/outbox.js';
 import { RemoteConfigController, configScope, parseRemoteConfig, type ConfigFetchResult } from '../../packages/web/src/remote-config.js';
 import type { UploadResult } from '../../packages/web/src/types.js';
 
@@ -130,6 +130,43 @@ describe('UploadOutbox', () => {
     const list = await storage.list('captures');
     assert.equal(list.length, MAX_SAVED_CAPTURES);
     assert.equal(list[0]!.capsuleId, 's5');
+  });
+
+  it('saved captures expire after 7 days (BC-ENT-038)', async () => {
+    const storage = new MemoryStorage();
+    const day = 86_400_000;
+    assert.equal(SAVED_CAPTURE_MAX_AGE_MS, 7 * day);
+    const t0 = 100 * day;
+    await saveCapture(storage, 'old', gz(), t0);
+    await saveCapture(storage, 'mid', gz(), t0 + 3 * day);
+    // Reading drops what expired, without a new save.
+    assert.deepEqual((await liveCaptures(storage, t0 + 7 * day + 1)).map((r) => r.capsuleId), ['mid']);
+    assert.deepEqual((await storage.list('captures')).map((r) => r.capsuleId), ['mid']);
+    // Saving drops expired captures too.
+    await saveCapture(storage, 'new', gz(), t0 + 11 * day);
+    assert.deepEqual((await storage.list('captures')).map((r) => r.capsuleId), ['new']);
+    // The cheap startup sweep deletes by key range.
+    await saveCapture(storage, 'newer', gz(), t0 + 12 * day);
+    await expireSavedCaptures(storage, t0 + 18 * day + 1);
+    assert.deepEqual((await storage.list('captures')).map((r) => r.capsuleId), ['newer']);
+  });
+
+  it('purgeCollected empties the outbox, envelopes and captures; clear() also drops caches but keeps leases', async () => {
+    const storage = new MemoryStorage();
+    const outbox = new UploadOutbox(storage);
+    await outbox.enqueue('c', gz());
+    await saveCapture(storage, 's', gz());
+    await storage.update('envelopes', () => ({ put: [{ id: '1_e', capsuleId: 'e', enqueuedAt: 1, size: 1, bytes: new Uint8Array([0x7b]) }], result: undefined }));
+    await storage.setKv('remote.config', { enabled: true });
+    await purgeCollected(storage);
+    for (const store of ['outbox', 'captures', 'envelopes'] as const) assert.deepEqual(await storage.list(store), []);
+    assert.deepEqual(await storage.getKv('remote.config'), { enabled: true });
+    await saveCapture(storage, 's2', gz());
+    assert.equal(await storage.tryLease('flush', 'tab-a', 60_000, 0), true);
+    await storage.clear();
+    assert.deepEqual(await storage.list('captures'), []);
+    assert.equal(await storage.getKv('remote.config'), undefined);
+    assert.equal(await storage.tryLease('flush', 'tab-b', 60_000, 1), false, 'a live lease survives clear()');
   });
 });
 
