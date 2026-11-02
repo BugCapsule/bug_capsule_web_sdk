@@ -153,7 +153,7 @@ export class Redactor {
   private static readonly authScheme = /\b(Bearer|Basic|Token|Digest)\s+[A-Za-z0-9\-._~+/]{6,}=*/gi;
   private static readonly jwt = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*/g;
   private static readonly knownKeys =
-    /\b(?:(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|bc[is]_[A-Za-z0-9_-]{20,})/g;
+    /\b(?:(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|bc(?:[isawpvt]|pd)_[A-Za-z0-9_-]{20,}|bcsdk\.v[0-9]+\.[A-Za-z0-9_-]{20,})/g;
   private static readonly quotedPair = /(["'])([^"'\\]{1,100})\1(\s*[:=]\s*)(["'])((?:[^"'\\]|\\.)*)\4/g;
   private static readonly equalsPair = /(?<![A-Za-z0-9_\-.[\]])([A-Za-z0-9_\-.[\]]{1,100})=([^&\s"'#;,)<>]+)/g;
   private static readonly colonPair = /(?<![A-Za-z0-9_\-.])([A-Za-z0-9_\-.]{2,100})(\s*:\s*)([^,\s}{\][]+)/g;
