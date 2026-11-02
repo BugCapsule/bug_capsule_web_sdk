@@ -478,6 +478,10 @@ Data waits in an IndexedDB outbox (10 capsules / 10 MiB / 7 days), survives
 reloads, and is shared safely between tabs. Storage errors drop a capsule,
 never your app.
 
+The in-memory recorder keeps at most `maxRecorderBytes` of event payload
+(default 8 MiB, approximate). Over it, the oldest HTTP bodies are dropped
+first, then the oldest events, and capsules report `capture.truncated`.
+
 ## Supported browsers
 
 | Browser | Capture | Replay |

@@ -1,0 +1,7 @@
+{
+  "@bugcapsule/web": {
+    "entry": "packages/web/dist/index.js",
+    "gzipBytes": 71848,
+    "measuredGzipBytes": 65316
+  }
+}
