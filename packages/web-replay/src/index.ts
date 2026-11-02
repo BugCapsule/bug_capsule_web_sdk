@@ -24,7 +24,7 @@ export interface ReplayAttemptOptions {
   /**
    * Escape hatch (`--allow-live`): requests and WebSockets whose URL contains
    * one of these substrings reach the real network. Each is logged and
-   * reported as `replay.unsafe_live`, which makes the attempt invalid.
+   * reported as `replay.unsafe_live`, which makes the run verdict UNSAFE.
    */
   allowLive?: string[];
   headed?: boolean;

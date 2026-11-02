@@ -1,4 +1,5 @@
 import { Runtime, type RuntimeOverrides } from './runtime.js';
+import { postconditions } from './replay/engine.js';
 import type { StateSerializer } from './integrations/state.js';
 import { FeedbackWidget, type FeedbackWidgetOptions } from './monitoring/feedback-widget.js';
 import { Scope } from './monitoring/scope.js';
@@ -155,9 +156,26 @@ export const BugCapsule = {
     rt?.fail(assertionId, message);
   },
 
-  /** Raises `assertionId` when `condition` is false. */
+  /**
+   * Raises `assertionId` when `condition` is false. During replay a passing
+   * check of the capsule's assertion is the evidence `bugcapsule verify`
+   * needs to call a fix FIXED (verdict v2).
+   */
   check(assertionId: string, condition: boolean, message = ''): void {
     if (!condition) rt?.fail(assertionId, message);
+    else rt?.engine?.checkPassed(assertionId);
+  },
+
+  /**
+   * Registers a postcondition: what must be true after a capsule's scenario
+   * replays without its failure ("the cart total is positive"). A no-op
+   * outside replay; in replay it is evaluated once, after replay settled
+   * without the failure, and every registered postcondition is reported. A
+   * throwing condition counts as not holding. Registering the same `name`
+   * again replaces it.
+   */
+  expect(name: string, condition: () => boolean): void {
+    postconditions.set(name, condition);
   },
 
   /**
@@ -391,6 +409,7 @@ export const BugCapsule = {
   async resetForTest(): Promise<void> {
     await rt?.dispose();
     rt = null;
+    postconditions.clear();
   },
 };
 

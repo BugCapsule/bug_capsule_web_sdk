@@ -33,16 +33,17 @@ describe('replay verdicts for runner divergences', () => {
     assert.equal(evaluateRun('verify', 1, [report('not_reproduced', [{ type: 'network.escaped', detail: 'POST fetch /api' }])]).verdict, 'inconclusive');
   });
 
-  it('replay.unsafe_live makes any attempt invalid, a reproduction included', () => {
+  it('replay.unsafe_live makes the run unsafe (exit 5), a reproduction included', () => {
     const live = [{ type: UNSAFE_LIVE_DIVERGENCE, detail: 'POST fetch http://127.0.0.1/api/live' }];
-    for (const outcome of ['reproduced', 'not_reproduced'] as const) {
-      const a = assessAttempt(report(outcome, live));
-      assert.equal(a.status, 'invalid', outcome);
-      assert.deepEqual(a.reasonCodes, ['replay.unsafe_live']);
-      assert.match(a.reasons[0]!, /replay\.unsafe_live/);
+    // The attempt keeps its own status; the run verdict carries the rule (verdicts.json).
+    assert.equal(assessAttempt(report('reproduced', live)).status, 'reproduced');
+    assert.equal(assessAttempt(report('not_reproduced', live)).status, 'invalid');
+    for (const [kind, outcome] of [['replay', 'reproduced'], ['verify', 'not_reproduced']] as const) {
+      const e = evaluateRun(kind, 1, [report(outcome, live)]);
+      assert.equal(e.verdict, 'unsafe', kind);
+      assert.equal(e.exitCode, 5);
+      assert.ok(e.reasons.includes('live traffic was allowed during replay'));
     }
-    assert.equal(evaluateRun('replay', 1, [report('reproduced', live)]).verdict, 'inconclusive');
-    assert.equal(evaluateRun('verify', 1, [report('not_reproduced', live)]).verdict, 'inconclusive');
     assert.equal(evaluateRun('replay', 1, [report('reproduced', [])]).verdict, 'reproduced', 'unchanged without it');
   });
 });

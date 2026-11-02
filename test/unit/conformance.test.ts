@@ -34,6 +34,10 @@ import {
   type RecordedInteraction,
   type ReplayReport,
   type RunKind,
+  evaluateVerifyV2,
+  replayEvidenceFromJson,
+  requiredCandidateAttempts,
+  wilsonLower,
 } from '../../packages/web/src/core/index.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -334,6 +338,7 @@ describe('conformance: verdicts', () => {
     divergences?: string[];
     otherFailures?: string[];
     message?: string;
+    evidence?: unknown;
   };
   const report = (r: FixtureReport): ReplayReport => ({
     outcome: r.outcome,
@@ -351,6 +356,7 @@ describe('conformance: verdicts', () => {
     gapsCompressed: 0,
     buildGitSha: null,
     message: r.message ?? null,
+    ...(r.evidence !== undefined ? { evidence: replayEvidenceFromJson(r.evidence)! } : {}),
   });
 
   it('expected divergences', () => {
@@ -365,6 +371,27 @@ describe('conformance: verdicts', () => {
       assert.equal(e.validAttempts, c.validAttempts);
       assert.deepEqual(e.attempts.map((a) => a.status), c.attemptStatuses);
       assert.deepEqual(e.reasonCodes, c.reasonCodes);
+    });
+  }
+
+  for (const c of f.verifyV2) {
+    it(`v2: ${c.name}`, () => {
+      const e = evaluateVerifyV2({
+        requestedAttempts: c.requested,
+        candidate: c.reports.map(report),
+        baseline: c.baseline ?? null,
+        eligibility: c.eligibility,
+      });
+      assert.equal(e.verdict, c.verdict);
+      assert.equal(VERDICT_WIRE[e.verdict], c.wire);
+      assert.equal(e.exitCode, c.exitCode);
+      assert.deepEqual(e.reasonCodes, c.reasonCodes);
+    });
+  }
+  for (const c of f.requiredAttempts) {
+    it(`required attempts after a ${c.baselineReproduced}/${c.baselineAttempts} baseline`, () => {
+      assert.equal(Math.round(wilsonLower(c.baselineReproduced, c.baselineAttempts) * 1e4) / 1e4, c.wilsonLower);
+      assert.equal(requiredCandidateAttempts(c.baselineReproduced, c.baselineAttempts), c.required);
     });
   }
 });
