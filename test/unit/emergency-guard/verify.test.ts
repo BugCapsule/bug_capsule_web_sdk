@@ -141,6 +141,14 @@ describe('credential resolution', () => {
     assert.deepEqual(resolveCredential(` ${INGEST_KEY}\n`, 'https://api.bugcapsule.com'), { apiUrl: 'https://api.bugcapsule.com', key: INGEST_KEY });
   });
 
+  it('allows plain http only to a local development host (the credential travels in every request)', () => {
+    for (const api of ['http://localhost:8787', 'http://127.0.0.1:8787', 'http://[::1]:8787', 'http://10.0.2.2:8787']) {
+      assert.equal(resolveCredential(INGEST_KEY, api).apiUrl, api);
+    }
+    assert.throws(() => resolveCredential(INGEST_KEY, 'http://api.example.com'), (e: unknown) => e instanceof InvalidCredentialError && /https/.test(e.message));
+    assert.throws(() => resolveCredential(INGEST_KEY, 'http://192.168.1.20'), InvalidCredentialError);
+  });
+
   it('refuses secret keys, junk, missing apiUrl, and never echoes the credential', () => {
     const cases: [string, string | undefined][] = [
       ['bcs_SuperSecretValueNeverLogged0001', 'https://api.bugcapsule.com'],
@@ -150,6 +158,9 @@ describe('credential resolution', () => {
       ['bcsdk.v1.!!!', undefined],
       ['hello', 'https://api.bugcapsule.com'],
       ['', 'https://api.bugcapsule.com'],
+      [INGEST_KEY, 'http://api.example.com'],
+      [INGEST_KEY, 'http://192.168.1.20:8787'],
+      [`bcsdk.v1.${Buffer.from(JSON.stringify({ api: 'http://api.example.com', key: INGEST_KEY })).toString('base64url')}`, undefined],
     ];
     for (const [c, api] of cases) {
       assert.throws(

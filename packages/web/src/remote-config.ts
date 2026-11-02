@@ -19,7 +19,10 @@ export interface RemoteCaptureConfig {
   tracesSampleRate: number | null;
   sessionTracking: boolean;
   maxBreadcrumbs: number;
-  /** When set, replaces the app's `tracePropagationTargets`. */
+  /**
+   * When set, narrows the app's `tracePropagationTargets`: a URL must also
+   * contain one of these plain substrings (never compiled as patterns).
+   */
   tracePropagationTargets: string[] | null;
   /**
    * capsule-v2 §7: interaction adapters switched off (e.g.
@@ -32,6 +35,12 @@ export interface RemoteCaptureConfig {
    */
   maxInteractionPayloadBytes: number | null;
 }
+
+/**
+ * Ceiling for the server's `maxCapsuleBytes` (the backend's own maximum). A
+ * larger value can only come from a misconfigured or compromised server.
+ */
+export const MAX_REMOTE_CAPSULE_BYTES = 50 * 1024 * 1024;
 
 /** Parses `/v1/sdk/config` (or the cache); throws on wrong types, clamps values. */
 export function parseRemoteConfig(j: Record<string, unknown>, fetchedAtMs?: number): RemoteCaptureConfig {
@@ -55,7 +64,7 @@ export function parseRemoteConfig(j: Record<string, unknown>, fetchedAtMs?: numb
   return {
     enabled: field<boolean>('enabled', 'boolean') ?? true,
     sampleRate: Number.isNaN(rate) ? 0 : Math.min(1, Math.max(0, rate)),
-    maxCapsuleBytes: maxBytes < 1 ? 1 : Math.floor(maxBytes),
+    maxCapsuleBytes: Number.isNaN(maxBytes) ? 1 : Math.min(MAX_REMOTE_CAPSULE_BYTES, Math.max(1, Math.floor(maxBytes))),
     captureNetworkBodies: field<boolean>('captureNetworkBodies', 'boolean') ?? true,
     redactKeys: (field<unknown[]>('redactKeys', 'array') ?? []).map(String),
     configTtlSeconds: Math.min(86_400, Math.max(0, Math.floor(ttl))),

@@ -419,6 +419,21 @@ describe('tracing', () => {
     assert.deepEqual(t!.spans.map((s) => [s.op, s.status]), [['serialize', 'ok'], ['http.client', 'internal_error']]);
   });
 
+  it('the server tracePropagationTargets only narrow the app list: no foreign host, no patterns', () => {
+    const { monitor, setRemote } = setup({ tracesSampleRate: 1, tracePropagationTargets: ['api.shop.test', '/^https:\\/\\/pay\\./'] });
+    const headers = (url: string) => monitor.httpStart({ kind: 'fetch', method: 'GET', url })!.headers;
+    assert.ok(headers('https://api.shop.test/cart'));
+    assert.ok(headers('https://pay.shop.test/x'), 'app patterns keep working');
+    setRemote({ tracePropagationTargets: ['api.shop.test/cart', 'evil.test'] });
+    assert.ok(headers('https://api.shop.test/cart/1'));
+    assert.equal(headers('https://api.shop.test/profile'), null, 'narrowed away');
+    assert.equal(headers('https://evil.test/x'), null, 'the server cannot add a host');
+    setRemote({ tracePropagationTargets: ['/.*/'] });
+    assert.equal(headers('https://api.shop.test/cart'), null, 'server entries are never compiled');
+    setRemote({ tracePropagationTargets: null });
+    assert.ok(headers('https://api.shop.test/profile'));
+  });
+
   it('HTTP observation: span, breadcrumb, traceparent/baggage for targets only', async () => {
     const { monitor, transport } = setup({ tracesSampleRate: 1, tracePropagationTargets: ['api.shop.test'] });
     const tx = monitor.startTransaction({ name: '/cart', op: 'navigation' });

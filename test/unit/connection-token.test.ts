@@ -139,6 +139,41 @@ describe('token-only setup', () => {
     }
   });
 
+  it('an explicit backend with a bcs_ secret key or plain http to a remote host is refused: logged, nothing uploaded', async () => {
+    for (const b of [
+      { url: 'https://self.example.test', ingestKey: 'bcs_' + 's'.repeat(43) },
+      { url: 'http://api.example.com', ingestKey: 'bci_' + 'k'.repeat(43) },
+      { url: 'http://192.168.1.20:8787', ingestKey: 'bci_' + 'k'.repeat(43) },
+    ]) {
+      const seen = backend(okBackend);
+      await BugCapsule.init({ appVersion: '1', appBuild: '1', backend: b, mode: 'qa' });
+      const s = BugCapsule.status()!;
+      assert.equal(s.connection.state, 'invalid_token', b.url);
+      assert.equal(s.connection.source, 'backend');
+      assert.equal(s.connection.apiUrl, null);
+      assert.ok(s.connection.message);
+      BugCapsule.reportError(new Error('still fine'));
+      await BugCapsule.flush(200);
+      assert.equal(seen.length, 0, b.url);
+      const lines = logged.filter((l) => l.includes("the backend config can't be used"));
+      assert.equal(lines.length, 1, 'logged once');
+      assert.ok(!lines[0]!.includes('s'.repeat(43)), 'never logs the key');
+      await BugCapsule.resetForTest();
+      logged = [];
+    }
+  });
+
+  it('an explicit backend over http to a local development host, or https, still connects', async () => {
+    for (const url of ['http://127.0.0.1:8787', 'http://localhost:8787', 'https://self.example.test']) {
+      const seen = backend(okBackend);
+      await BugCapsule.init({ appVersion: '1', appBuild: '1', backend: { url, ingestKey: 'bci_' + 'k'.repeat(43) }, mode: 'qa' });
+      await until(() => BugCapsule.status()!.connection.state === 'connected');
+      assert.equal(seen[0]!.url, `${url}/v1/sdk/config`);
+      assert.deepEqual(logged, []);
+      await BugCapsule.resetForTest();
+    }
+  });
+
   it('a revoked token stops capture with the backend’s actionable reason', async () => {
     backend((url) =>
       url.endsWith('/v1/sdk/config')

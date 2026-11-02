@@ -195,9 +195,9 @@ export class Monitor implements MonitorHooks, SpanHost {
     return this.deps.config.enableAutoSessionTracking !== false && this.deps.remote()?.sessionTracking !== false;
   }
 
+  /** The app's targets; the server's list only narrows them (see `shouldPropagate`). */
   private get targets(): (string | RegExp)[] | null {
-    const remote = this.deps.remote()?.tracePropagationTargets;
-    const list = remote ?? this.deps.config.tracePropagationTargets ?? null;
+    const list = this.deps.config.tracePropagationTargets ?? null;
     if (list === null) return null;
     let compiled = this.targetsCache.get(list);
     if (!compiled) {
@@ -442,7 +442,7 @@ export class Monitor implements MonitorHooks, SpanHost {
     const short = url.split(/[?#]/)[0] ?? url;
     const span = parent?.startChild({ op: 'http.client', description: `${request.method} ${short}`, data: { url, 'http.request.method': request.method } }) ?? null;
     let headers: Record<string, string> | null = null;
-    if (shouldPropagate(request.url, this.targets, globalThis.location?.origin ?? null)) {
+    if (shouldPropagate(request.url, this.targets, globalThis.location?.origin ?? null, this.deps.remote()?.tracePropagationTargets ?? null)) {
       headers = { traceparent: span ? span.toTraceparent() : this.propagationTraceparent(), baggage: this.baggage() };
     }
     let done = false;
