@@ -30,7 +30,8 @@ import type { CaptureContext, Mechanism, MonitorHooks, MonitoringLink } from './
 import { BackendTransport, configScope, RemoteConfigController, type BugCapsuleTransport, type RemoteCaptureConfig } from './remote-config.js';
 import { detectReplayBridge, ReplayEngine, type ReplayBridge } from './replay/engine.js';
 import { openStorage, type SdkStorage } from './storage/idb.js';
-import { saveCapture, UploadOutbox } from './storage/outbox.js';
+import { expireSavedCaptures, liveCaptures, purgeCollected, saveCapture, UploadOutbox } from './storage/outbox.js';
+import { readConsent, writeConsent } from './consent.js';
 import { explicitBackendRefusal, parseConnectionToken, type ConnectionTokenError } from './connection-token.js';
 import type { BugCapsuleConfig, BugCapsuleIntegration, BugCapsuleSession, BugCapsuleStatus, CaptureResult, ReplayContext, UploadResult } from './types.js';
 
@@ -194,6 +195,12 @@ export class Runtime implements BugCapsuleSession {
   private sessionRate = 1;
   private captureEpoch = 0;
   private killed = false;
+  /** The consent switch (`setCollectionEnabled`): persisted choice, else `config.collectionEnabled`, else true. */
+  private collecting: boolean;
+  /** Collection was switched off during this page session; switching it on again takes effect on the next load. */
+  private withdrawn = false;
+  /** Capture setup ran (it is skipped while collection is off). */
+  private prepared = false;
   private anchor: number | null = null;
   private wallAtAnchor: number | null = null;
   private checkpointTimer: ReturnType<typeof setInterval> | null = null;
@@ -245,7 +252,8 @@ export class Runtime implements BugCapsuleSession {
     this.integrations = [...(this.config.integrations ?? []), this.state];
     this.currentRedactor = this.baseRedactor();
     this.captureBodies = this.appCapturesBodies;
-    if (this.config.enabled === false) this.notRecording = 'disabled';
+    this.collecting = readConsent(this.config.storageName) ?? this.config.collectionEnabled ?? true;
+    if (this.config.enabled === false || !this.collecting) this.notRecording = 'disabled';
   }
 
   // ------------------------------------------------------------ session API
@@ -423,8 +431,10 @@ export class Runtime implements BugCapsuleSession {
   }
 
   private async prepareCapture(): Promise<void> {
-    if (this.config.enabled === false) return;
+    if (this.config.enabled === false || !this.collecting || this.prepared) return;
+    this.prepared = true;
     const storage = await this.storage();
+    await expireSavedCaptures(storage).catch(() => {});
     const base =
       this.overrides.transport ?? (this.config.backend ? new BackendTransport(this.config.backend, this.nativeFetch) : null);
     const transport = base ? this.observed(base) : null;
@@ -475,7 +485,7 @@ export class Runtime implements BugCapsuleSession {
         afterSeq: 0,
         data: await this.snapshot('launch'),
       };
-      this.recorder = new FlightRecorder(launch, this.config.maxEvents ?? 20_000, this.config.windowMs ?? 300_000);
+      this.recorder = this.newRecorder(launch);
       this.installCapture();
     }
   }
@@ -510,7 +520,7 @@ export class Runtime implements BugCapsuleSession {
     let state: BugCapsuleStatus['connection']['state'];
     if (tokenError) state = tokenError.error;
     else if (!this.config.backend && !this.overrides.transport) state = 'not_configured';
-    else if (this.config.enabled === false) state = 'disabled';
+    else if (this.config.enabled === false || !this.collecting) state = 'disabled';
     else if (remote?.rejected) state = 'rejected';
     else if (remote?.current && !remote.current.enabled) state = 'disabled';
     else if (remote?.fetchedThisSession) state = 'connected';
@@ -526,7 +536,7 @@ export class Runtime implements BugCapsuleSession {
         state,
         source: this.connection.source,
         apiUrl: this.config.backend?.url ?? null,
-        reason: tokenError?.error ?? (state === 'rejected' || state === 'offline' ? (failure?.reason ?? failure?.message ?? null) : null),
+        reason: tokenError?.error ?? (state === 'disabled' && !this.collecting ? 'collection_disabled' : null) ?? (state === 'rejected' || state === 'offline' ? (failure?.reason ?? failure?.message ?? null) : null),
         message: tokenError?.message ?? (state === 'rejected' ? (failure?.detail ?? 'the backend refused the credential') : state === 'offline' ? 'the backend could not be reached; data is kept and retried' : null),
         configFetchedAt: remote?.fetchedThisSession ?? null,
         firstEventAcceptedAt: this.firstEventAcceptedAt,
@@ -627,7 +637,7 @@ export class Runtime implements BugCapsuleSession {
   }
 
   private decideRecording(remote: RemoteCaptureConfig | null): boolean {
-    if (this.config.enabled === false || (remote && !remote.enabled)) {
+    if (this.config.enabled === false || !this.collecting || (remote && !remote.enabled)) {
       this.notRecording = 'disabled';
       return false;
     }
@@ -1048,10 +1058,10 @@ export class Runtime implements BugCapsuleSession {
     // Never queue what a reader would reject; keep it locally for inspection.
     const problem = validateCapsuleDocument(capsuleToJson(capsule));
     const bytes = await encodeCapsule(capsule);
-    if (this.killed) return null;
+    if (this.halted) return null;
     const storage = await this.storage();
     await saveCapture(storage, capsule.manifest.capsuleId, bytes).catch((e) => this.warnOnce(`could not save capture: ${String(e)}`));
-    if (this.killed) return null;
+    if (this.halted) return null;
 
     let upload: UploadResult | null = null;
     const outbox = this.outbox;
@@ -1063,7 +1073,7 @@ export class Runtime implements BugCapsuleSession {
         upload = { status: 'rejected', message: `capsule is ${bytes.length} bytes, limit ${this.maxCapsuleBytes}` };
       } else if (!(await outbox.enqueue(capsule.manifest.capsuleId, bytes))) {
         upload = { status: 'rejected', message: 'not queued (outbox limit or storage error)' };
-      } else if (this.killed) {
+      } else if (this.halted) {
         await outbox.purge().catch(() => 0);
         return null;
       } else {
@@ -1082,7 +1092,12 @@ export class Runtime implements BugCapsuleSession {
   }
 
   private get uploadsAllowed(): boolean {
-    return !this.disposed && (this.remote?.uploadsAllowed ?? false);
+    return !this.disposed && this.collecting && (this.remote?.uploadsAllowed ?? false);
+  }
+
+  /** The kill switch fired or collection was switched off: nothing more is written or sent. */
+  private get halted(): boolean {
+    return this.killed || !this.collecting;
   }
 
   /** Uploads queued capsules; refreshes a stale remote config first so a kill switch is seen before sending. */
@@ -1115,7 +1130,7 @@ export class Runtime implements BugCapsuleSession {
 
   async savedCaptures(): Promise<{ capsuleId: string; savedAt: number; bytes: Uint8Array }[]> {
     const storage = await this.storage();
-    const list = await storage.list('captures').catch(() => []);
+    const list = await liveCaptures(storage).catch(() => []);
     return list.reverse().map((r) => ({ capsuleId: r.capsuleId, savedAt: r.enqueuedAt, bytes: r.bytes }));
   }
 
@@ -1181,6 +1196,75 @@ export class Runtime implements BugCapsuleSession {
     void this.storage()
       .then((s) => s.update('captures', (records) => ({ remove: records.map((r) => r.id), result: undefined })))
       .catch(() => {});
+  }
+
+  // --------------------------------------------------- local data lifecycle
+
+  get collectionEnabled(): boolean {
+    return this.collecting;
+  }
+
+  /**
+   * Consent switch (BC-ENT-038), persisted. Off: recording stops, monitoring
+   * stops, nothing is uploaded, and queued capsules, envelopes and saved
+   * captures are deleted. On: capture starts now if this page started with
+   * collection off; after a withdrawal in this page session it resumes on
+   * the next load (like the kill switch, nothing restarts mid-session).
+   */
+  async setCollectionEnabled(enabled: boolean): Promise<void> {
+    writeConsent(enabled, this.config.storageName);
+    if (enabled === this.collecting) {
+      if (!enabled) await this.purgeCollected();
+      return;
+    }
+    this.collecting = enabled;
+    if (!enabled) {
+      this.withdrawn = true;
+      this.stopRecording('disabled');
+      this.lastFailure = null;
+      this.monitorClient?.kill();
+      await this.purgeCollected();
+      return;
+    }
+    if (this.disposed || this.engine || this.withdrawn || this.prepared) return;
+    this.notRecording = 'not_recording';
+    try {
+      await withTimeout(this.prepareCapture(), this.config.setupTimeoutMs ?? 5000);
+    } catch (e) {
+      this.warnOnce(`capture setup failed; the app runs without capture: ${String(e)}`);
+      this.stopRecording('not_recording');
+    }
+    this.afterStarted();
+  }
+
+  private async purgeCollected(): Promise<void> {
+    await this.outbox?.purge().catch(() => 0);
+    await purgeCollected(await this.storage()).catch((e) => this.warnOnce(`could not delete local data: ${String(e)}`));
+  }
+
+  /**
+   * Deletes what the SDK stored on this device: queued capsules and
+   * envelopes, saved captures, the cached remote config and retry state,
+   * plus the in-memory event buffer and breadcrumbs of this page. Recording
+   * (if on) continues from a fresh launch checkpoint.
+   */
+  async clearLocalData(): Promise<void> {
+    const storage = await this.storage();
+    await storage.clear();
+    this.lastFailure = null;
+    this.monitorClient?.clearBreadcrumbs();
+    const recorder = this.recorder;
+    if (!this.recording || !recorder) return;
+    const epoch = this.captureEpoch;
+    recorder.rewrite({ event: () => null, countDropped: false });
+    const t = this.now();
+    const data = await this.snapshot('launch');
+    if (epoch !== this.captureEpoch || recorder !== this.recorder) return;
+    this.recorder = this.newRecorder({ kind: 'launch', t, wallClockMs: Date.now(), afterSeq: 0, data });
+  }
+
+  private newRecorder(launch: Checkpoint): FlightRecorder {
+    return new FlightRecorder(launch, this.config.maxEvents ?? 20_000, this.config.windowMs ?? 300_000);
   }
 
   // ----------------------------------------------------------------- replay
