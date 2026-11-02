@@ -28,6 +28,11 @@ content, cookies, storage outside the allowlist, password inputs.
 - Request keys, query normalization, body hashing, endpoint rules and
   occurrence order follow the capsule v1 rules, checked against the shared
   conformance fixtures in `spec-fixtures/`.
+- Bodies are recorded in `debug`/`qa` and off by default in `production`
+  (`captureNetworkBodies`; the backend can only turn them off). Binary and
+  non-UTF-8 bodies keep only size and content type unless
+  `networkIntegration({ captureBinaryBodies: true })`; request keys hash the
+  real bytes either way.
 - Bodies are never buffered whole. The SDK reads a `clone()` of the response
   up to `maxBodyBytes` (256 KiB text, 64 KiB binary), then cancels the clone;
   the app consumes the original stream unchanged. Larger bodies are marked

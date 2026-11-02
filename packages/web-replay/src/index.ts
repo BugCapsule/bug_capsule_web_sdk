@@ -5,6 +5,7 @@ import {
   capsuleToJson,
   decodeCapsule,
   replaySettingsFromJson,
+  storageSeed,
   type Capsule,
   type Divergence,
   type GzipCodec,
@@ -18,8 +19,14 @@ export interface ReplayAttemptOptions {
   replayUrl: string;
   /** The running app (`http://127.0.0.1:4317/`). The capsule's recorded location is opened relative to it. */
   appUrl: string;
-  /** Origins (besides the app's) the page may load from, e.g. a static CDN. Everything else is blocked and reported. */
+  /** Origins (besides the app's) the page may load static resources from, e.g. a CDN. Everything else is blocked and reported. */
   allowOrigins?: string[];
+  /**
+   * Escape hatch (`--allow-live`): requests and WebSockets whose URL contains
+   * one of these substrings reach the real network. Each is logged and
+   * reported as `replay.unsafe_live`, which makes the run verdict UNSAFE.
+   */
+  allowLive?: string[];
   headed?: boolean;
   /** Overall budget for the attempt (default 120 s). */
   timeoutMs?: number;
@@ -76,6 +83,20 @@ function errorReport(settings: ReplaySettings | null, message: string, outcome: 
   };
 }
 
+/** Resource types a replayed page may load for real from an allowed origin (GET/HEAD only). */
+const STATIC_RESOURCE_TYPES: ReadonlySet<string> = new Set(['document', 'script', 'stylesheet', 'image', 'font', 'media']);
+
+/** Whether a request is a static load (the app's HTML, scripts, styles, images, fonts, media) from an allowed origin. */
+export function isStaticLoad(url: string, method: string, resourceType: string, allowedOrigins: ReadonlySet<string>): boolean {
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    return false;
+  }
+  return allowedOrigins.has(origin) && (method === 'GET' || method === 'HEAD') && STATIC_RESOURCE_TYPES.has(resourceType);
+}
+
 async function get(url: string): Promise<Response> {
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   if (res.status !== 200) throw new Error(`GET ${url.replace(/\/a\/[^/]+/, '/a/…')} → HTTP ${res.status}`);
@@ -104,9 +125,11 @@ async function deliver(replayUrl: string, report: ReplayReport, log: (l: string)
 /**
  * Runs one replay attempt: loads the capsule and settings from the CLI,
  * opens the app in a fresh Chromium context sized like the recording,
- * restores allowlisted storage before any page script runs, blocks requests
- * to origins other than the app's (reported as `network.escaped`) and real
- * WebSockets when the capsule records them (`dependency.live`), lets the
+ * seeds storage allowed by the capsule's `storagePolicy` before any page
+ * script runs (other keys: `restore.disallowed`), lets through only static
+ * GET/HEAD loads from the app's origin (and `allowOrigins`), aborts every
+ * other request and all real WebSockets (reported as `network.escaped`, or
+ * `dependency.live` for a declared WebSocket dependency), lets the
  * in-page engine (the app's own `@bugcapsule/web` with `allowReplay: true`)
  * replay inputs and serve recorded responses, and posts its report.
  */
@@ -134,6 +157,15 @@ export async function runReplayAttempt(options: ReplayAttemptOptions): Promise<R
   const appUrl = new URL(options.appUrl);
   const allowed = new Set([appUrl.origin, ...(options.allowOrigins ?? []).map((o) => new URL(o).origin)]);
   const escaped: Divergence[] = [];
+  const allowLive = (options.allowLive ?? []).filter((p) => p.length > 0);
+  const note = (d: Divergence) => {
+    if (escaped.length < 100) escaped.push(d);
+  };
+  if (allowLive.length > 0) {
+    note({ type: 'replay.unsafe_live', detail: `live network allowed for URLs containing: ${allowLive.join(', ')}` });
+    log(`--allow-live: requests matching ${allowLive.map((p) => JSON.stringify(p)).join(', ')} reach the real network; this attempt cannot count as evidence`);
+  }
+  const isLive = (url: string) => allowLive.some((p) => url.includes(p));
   const screen = capsule.manifest.platform.screen ?? {};
   const history = capsule.checkpoint.data.history as { location?: string } | undefined;
   const startUrl = new URL(history?.location && history.location.startsWith('/') ? history.location : appUrl.pathname + appUrl.search, appUrl);
@@ -151,35 +183,56 @@ export async function runReplayAttempt(options: ReplayAttemptOptions): Promise<R
       serviceWorkers: 'block',
     });
 
+    // Deny by default: the page may only load its own static resources (and the app's HTML) from the
+    // app origin or an --allow-origin. Every other request (fetch, XHR, beacons, EventSource, form posts,
+    // other methods, worker requests) is aborted and reported, so a replay never talks to a real server.
     await context.route('**/*', async (route) => {
-      const url = route.request().url();
-      let origin: string | null = null;
-      try {
-        origin = new URL(url).origin;
-      } catch {
-        origin = null;
-      }
-      if (url.startsWith('data:') || url.startsWith('blob:') || (origin !== null && allowed.has(origin))) {
+      const request = route.request();
+      const url = request.url();
+      if (url.startsWith('data:') || url.startsWith('blob:')) {
         await route.continue();
         return;
       }
-      if (escaped.length < 100) escaped.push({ type: 'network.escaped', detail: `${route.request().method()} ${url.split('?')[0]}` });
+      if (isStaticLoad(url, request.method(), request.resourceType(), allowed)) {
+        await route.continue();
+        return;
+      }
+      const what = `${request.method()} ${request.resourceType()} ${url.split(/[?#]/)[0]}`;
+      if (isLive(url)) {
+        log(`live request (--allow-live): ${what}`);
+        note({ type: 'replay.unsafe_live', detail: what });
+        await route.continue();
+        return;
+      }
+      note({ type: 'network.escaped', detail: what });
       await route.abort('blockedbyclient');
     });
 
-    // capsule-v2: the app's SDK serves recorded WebSockets in the page. A socket that still reaches the
-    // network (a worker, a WebSocket reference taken before BugCapsule.init) escaped it: block and report it.
-    if ((capsule.manifest.dependencies ?? []).some((d) => d.kind === 'websocket' && d.required)) {
-      await context.routeWebSocket(/.*/, (ws) => {
-        if (escaped.length < 100) escaped.push({ type: 'dependency.live', detail: `WebSocket ${ws.url().split('?')[0]} reached the network` });
-        ws.close({ code: 1008, reason: 'blocked by the BugCapsule replay runner' }).catch(() => {});
-      });
-    }
+    // Real WebSockets never connect. capsule-v2: the app's SDK serves recorded WebSockets in the page; a
+    // socket that still reaches the network (a worker, a reference taken before BugCapsule.init, an app
+    // without the WebSocket integration) is blocked and reported.
+    const wsDeclared = (capsule.manifest.dependencies ?? []).some((d) => d.kind === 'websocket' && d.required);
+    await context.routeWebSocket(/.*/, (ws) => {
+      const url = ws.url().split(/[?#]/)[0];
+      if (isLive(ws.url())) {
+        log(`live WebSocket (--allow-live): ${url}`);
+        note({ type: 'replay.unsafe_live', detail: `WebSocket ${url}` });
+        ws.connectToServer();
+        return;
+      }
+      note(wsDeclared ? { type: 'dependency.live', detail: `WebSocket ${url} reached the network` } : { type: 'network.escaped', detail: `WebSocket ${url}` });
+      ws.close({ code: 1008, reason: 'blocked by the BugCapsule replay runner' }).catch(() => {});
+    });
 
-    const storage = {
-      local: (capsule.checkpoint.data.local_storage ?? null) as Record<string, string> | null,
-      session: (capsule.checkpoint.data.session_storage ?? null) as Record<string, string> | null,
-    };
+    // Seed only keys the capture-time policy recorded in the manifest allows (none without one).
+    const local = storageSeed(capsule.manifest, 'local_storage', capsule.checkpoint.data.local_storage);
+    const session = storageSeed(capsule.manifest, 'session_storage', capsule.checkpoint.data.session_storage);
+    const storage = { local: local.seed, session: session.seed };
+    const unseeded: Divergence[] = [
+      ...local.skipped.map((k) => ({ type: 'restore.disallowed', detail: `local_storage.${k}` })),
+      ...session.skipped.map((k) => ({ type: 'restore.disallowed', detail: `session_storage.${k}` })),
+    ].slice(0, 100);
+    if (unseeded.length > 0) log(`not seeding ${unseeded.length} storage key(s) outside the capsule's storage policy`);
     await context.addInitScript(
       ({ origin, storage }) => {
         if (location.origin !== origin) return;
@@ -238,7 +291,7 @@ export async function runReplayAttempt(options: ReplayAttemptOptions): Promise<R
       ),
     );
     let report = await Promise.race([reportPromise, crashed, timedOut]);
-    if (escaped.length > 0) report = { ...report, divergences: [...report.divergences, ...escaped] };
+    if (escaped.length > 0 || unseeded.length > 0) report = { ...report, divergences: [...report.divergences, ...unseeded, ...escaped] };
     if (!report.attemptId && settings.attemptId) report = { ...report, attemptId: settings.attemptId };
     await deliver(base, report, log);
     return report;
@@ -252,7 +305,7 @@ export async function runReplayAttempt(options: ReplayAttemptOptions): Promise<R
   }
 }
 
-/** CLI entry: `bugcapsule-web-runner --replay-url <url> --app-url <url> [--allow-origin <o>]… [--headed] [--timeout <s>]`. */
+/** CLI entry: `bugcapsule-web-runner --replay-url <url> --app-url <url> [--allow-origin <o>]… [--allow-live <url substring>]… [--headed] [--timeout <s>]`. */
 export async function main(argv: string[]): Promise<number> {
   const args: Record<string, string[]> = {};
   let flag: string | null = null;
@@ -269,13 +322,16 @@ export async function main(argv: string[]): Promise<number> {
   const replayUrl = args['replay-url']?.[0] ?? process.env[ReplayProtocol.envUrl];
   const appUrl = args['app-url']?.[0];
   if (args.help || !replayUrl || !appUrl) {
-    process.stderr.write('usage: bugcapsule-web-runner --replay-url <armed url> --app-url <app url> [--allow-origin <origin>]... [--headed] [--timeout <seconds>]\n');
+    process.stderr.write(
+      'usage: bugcapsule-web-runner --replay-url <armed url> --app-url <app url> [--allow-origin <origin>]... [--allow-live <url substring>]... [--headed] [--timeout <seconds>]\n',
+    );
     return args.help ? 0 : 64;
   }
   const report = await runReplayAttempt({
     replayUrl,
     appUrl,
     allowOrigins: args['allow-origin'] ?? [],
+    allowLive: args['allow-live'] ?? [],
     headed: 'headed' in args,
     ...(args.timeout?.[0] ? { timeoutMs: Number(args.timeout[0]) * 1000 } : {}),
     ...(process.env.BUGCAPSULE_CHROMIUM ? { executablePath: process.env.BUGCAPSULE_CHROMIUM } : {}),

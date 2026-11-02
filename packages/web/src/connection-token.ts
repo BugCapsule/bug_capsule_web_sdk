@@ -38,7 +38,40 @@ function apiUrl(api: unknown): string | null {
     return null;
   }
   if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password || u.search || u.hash) return null;
+  if (u.protocol === 'http:' && !isLocalDevelopmentHost(u.hostname)) return null;
   return api.replace(/\/+$/, '');
+}
+
+/**
+ * Hosts plain http may reach: loopback, and the Android emulator's alias for
+ * the development machine. Anything else must be https, because the ingest
+ * credential travels in every request.
+ */
+export function isLocalDevelopmentHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === 'localhost' || h === '[::1]' || h === '::1' || h === '10.0.2.2' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+/**
+ * Why an explicit backend config can't be used, or null when it can. The
+ * ingest key travels in every request, so it needs https except on a local
+ * development host, and a `bcs_` secret key must never ship in an app.
+ */
+export function explicitBackendRefusal(backend: BugCapsuleBackendConfig): string | null {
+  if (typeof backend.ingestKey === 'string' && backend.ingestKey.startsWith('bcs_')) {
+    return 'a bcs_ secret key is not an ingest key; use an SDK token';
+  }
+  let u: URL;
+  try {
+    u = new URL(backend.url);
+  } catch {
+    return 'url must be an absolute https URL';
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'url must be an absolute https URL';
+  if (u.protocol === 'http:' && !isLocalDevelopmentHost(u.hostname)) {
+    return 'plain http is only allowed to localhost, 127.0.0.1 or 10.0.2.2; use https';
+  }
+  return null;
 }
 
 /** Parses a connection token offline. Never throws. */

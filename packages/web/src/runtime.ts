@@ -14,6 +14,7 @@ import {
   type Checkpoint,
   type CheckpointKind,
   type FailureRecord,
+  type Manifest,
   type SentryLink,
 } from './core/model.js';
 import { replaySettingsFromJson, type ReplayReport, type ReplaySettings } from './core/protocol.js';
@@ -23,13 +24,14 @@ import { validateCapsuleDocument } from './core/validator.js';
 import { HistoryIntegration } from './integrations/history.js';
 import { NetworkIntegration } from './integrations/network.js';
 import { StateIntegration } from './integrations/state.js';
+import { WebStorageIntegration } from './integrations/storage.js';
 import { Monitor } from './monitoring/client.js';
 import type { CaptureContext, Mechanism, MonitorHooks, MonitoringLink } from './monitoring/types.js';
 import { BackendTransport, configScope, RemoteConfigController, type BugCapsuleTransport, type RemoteCaptureConfig } from './remote-config.js';
 import { detectReplayBridge, ReplayEngine, type ReplayBridge } from './replay/engine.js';
 import { openStorage, type SdkStorage } from './storage/idb.js';
 import { saveCapture, UploadOutbox } from './storage/outbox.js';
-import { parseConnectionToken, type ConnectionTokenError } from './connection-token.js';
+import { explicitBackendRefusal, parseConnectionToken, type ConnectionTokenError } from './connection-token.js';
 import type { BugCapsuleConfig, BugCapsuleIntegration, BugCapsuleSession, BugCapsuleStatus, CaptureResult, ReplayContext, UploadResult } from './types.js';
 
 import { SDK_NAME, SDK_VERSION } from './version.js';
@@ -95,7 +97,7 @@ export interface RuntimeOverrides {
   bridge?: ReplayBridge | null;
 }
 
-/** How the backend was configured, and why a token could not be used. */
+/** How the backend was configured, and why a token (or an explicit backend) could not be used. */
 export interface ResolvedConnection {
   source: 'token' | 'backend' | null;
   tokenError: { error: ConnectionTokenError; message: string } | null;
@@ -111,6 +113,12 @@ export function resolveConfig(input: Readonly<BugCapsuleConfig>): { config: BugC
   const config: BugCapsuleConfig = { ...input, appVersion: input.appVersion || releaseVersion || 'unknown', appBuild: input.appBuild || '0' };
   if (input.backend) {
     if (input.token) console.warn('[bugcapsule] both token and backend are set; using backend and ignoring token');
+    const refusal = explicitBackendRefusal(input.backend);
+    if (refusal) {
+      console.error(`[bugcapsule] the backend config can't be used: ${refusal}. The app runs without BugCapsule.`);
+      const { backend: _refused, ...rest } = config;
+      return { config: rest, connection: { source: 'backend', tokenError: { error: 'invalid_token', message: refusal } } };
+    }
     return { config, connection: { source: 'backend', tokenError: null } };
   }
   if (input.token === undefined || input.token === null) return { config, connection: { source: null, tokenError: null } };
@@ -236,7 +244,7 @@ export class Runtime implements BugCapsuleSession {
     this.sampleRandom = overrides.random ?? Math.random;
     this.integrations = [...(this.config.integrations ?? []), this.state];
     this.currentRedactor = this.baseRedactor();
-    this.captureBodies = this.config.captureNetworkBodies ?? true;
+    this.captureBodies = this.appCapturesBodies;
     if (this.config.enabled === false) this.notRecording = 'disabled';
   }
 
@@ -244,6 +252,14 @@ export class Runtime implements BugCapsuleSession {
 
   get mode() {
     return this.config.mode ?? 'production';
+  }
+
+  /**
+   * Request/response bodies: the app's `captureNetworkBodies`, else off in
+   * production and on in debug/qa. The backend can only turn them off.
+   */
+  private get appCapturesBodies(): boolean {
+    return this.config.captureNetworkBodies ?? this.mode !== 'production';
   }
   get isRecording(): boolean {
     return this.recording;
@@ -434,7 +450,7 @@ export class Runtime implements BugCapsuleSession {
     const cached = this.remote?.current ?? null;
     if (transport && this.config.monitoring !== false && cached?.enabled !== false) this.monitorClient = this.createMonitor(storage, transport);
     this.currentRedactor = this.baseRedactor(cached?.redactKeys ?? []);
-    this.captureBodies = (this.config.captureNetworkBodies ?? true) && (cached?.captureNetworkBodies ?? true);
+    this.captureBodies = this.appCapturesBodies && (cached?.captureNetworkBodies ?? true);
     this.maxCapsuleBytes = cached?.maxCapsuleBytes ?? this.maxCapsuleBytes;
     this.recording = this.decideRecording(cached);
 
@@ -972,6 +988,8 @@ export class Runtime implements BugCapsuleSession {
       'random.seeded': 'explicit',
     };
     for (const i of this.integrations) Object.assign(capabilities, i.capabilities ?? {});
+    const storagePolicy: Manifest['storagePolicy'] = {};
+    for (const i of this.integrations) if (i instanceof WebStorageIntegration) storagePolicy[i.name] = i.policy;
     const nav = globalThis.navigator;
     const capsule: Capsule = {
       format: 'bugcapsule.capsule',
@@ -1021,6 +1039,7 @@ export class Runtime implements BugCapsuleSession {
         ...(link ? { monitoring: { ...link } } : {}),
         ...(sentry ? { links: { sentry: { ...sentry } } } : {}),
         ...(dependencies.length > 0 ? { dependencies } : {}),
+        ...(Object.keys(storagePolicy).length > 0 ? { storagePolicy } : {}),
       },
       checkpoint: { ...window.checkpoint, t: window.checkpoint.t - anchor },
       events,
@@ -1123,7 +1142,7 @@ export class Runtime implements BugCapsuleSession {
         if (this.sampleRandom() >= keep) this.stopRecording('sampled_out');
       }
     }
-    const bodies = (this.config.captureNetworkBodies ?? true) && next.captureNetworkBodies;
+    const bodies = this.appCapturesBodies && next.captureNetworkBodies;
     if (this.captureBodies && !bodies) this.recorder?.rewrite({ event: (e) => (e.type === 'http' ? { ...e, data: withoutBodies(e.data) } : e) });
     this.captureBodies = bodies;
     const wanted = [...(this.config.redactKeys ?? []), ...next.redactKeys];

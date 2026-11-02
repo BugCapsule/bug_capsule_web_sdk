@@ -183,7 +183,8 @@ await BugCapsule.init({
 |---|---|
 | `onClick={BugCapsule.action('cart.checkout', checkout)}` and `data-bugcapsule-action="cart.checkout"` | Replay can invoke the action by id; the attribute is also a stable selector for click replay. |
 | `BugCapsule.trackInput('login.email', inputEl)`, or `useTrackedInput` / `useTrackedState` in React | Typed text is replayed. Password inputs, `data-bugcapsule-sensitive` elements and `sensitive: true` are recorded as `[REDACTED]`. |
-| `BugCapsule.check('cart_total_non_negative', total >= 0)` / `BugCapsule.fail(id)` | Wrong behaviour that doesn't throw becomes a failure replay can check. |
+| `BugCapsule.check('cart_total_non_negative', total >= 0)` / `BugCapsule.fail(id)` | Wrong behaviour that doesn't throw becomes a failure replay can check. In replay, a passing `check` of the capsule's assertion is the evidence `verify` needs to call a fix FIXED. |
+| `BugCapsule.expect('cart.total_positive', () => cart.total > 0)` | A postcondition: what must hold after the scenario replays without its failure. A no-op outside replay; evaluated once after a clean replay settles (a throwing condition counts as false) and reported with the attempt. |
 | `BugCapsule.reportError(e)` / `<BugCapsuleErrorBoundary>` | Errors your code or React catches never reach `window.onerror`. |
 | `BugCapsule.registerState('cart', { serialize, restore })` / `useBugCapsuleState` | Your app's own state is saved in checkpoints and restored in replay. |
 | `indexedDbIntegration([{ name, snapshot, restore }])` | Your IndexedDB stores, through adapters you write. The SDK never reads IndexedDB on its own. |
@@ -218,10 +219,22 @@ See [`packages/react`](packages/react) for every hook and component.
 | Errors and assertions | `error`, `unhandledrejection`, `reportError`, error boundary, `check` / `fail` | Matched by signature or id |
 | Network | `fetch` and `XMLHttpRequest` | Recorded responses served with the recorded latency, status and errors |
 | WebSockets (opt-in, `webSocketIntegration()`) | connects, opens, sends, messages, errors and closes of `WebSocket` in the page | An in-memory socket replays the recorded server side; nothing connects for real |
-| Storage | allowlisted `localStorage` / `sessionStorage` keys, IndexedDB adapters, registered state | Restored before your app renders |
+| Storage | allowlisted `localStorage` / `sessionStorage` keys, IndexedDB adapters, registered state | Restored before your app renders; only keys your allowlist covers are written (others are reported as `restore.disallowed`) |
 
 **Never captured:** untracked input values, DOM content, cookies, storage
 outside your allowlist, password inputs.
+
+**Request and response bodies** are recorded (redacted) in `debug` and `qa`
+mode and **not recorded in `production` mode** unless you set
+`captureNetworkBodies: true`. Your explicit setting always wins; the
+backend's remote config can turn bodies off but never on. Binary and
+non-UTF-8 bodies are recorded as size and content type only
+(`requestBodyBytes` / `responseBodyBytes`, `requestContentType` /
+`responseContentType`) in every mode; opt in with
+`networkIntegration({ captureBinaryBodies: true })`. A capsule without
+bodies still replays: responses are served with their recorded status,
+headers and latency and an empty body, the capsule's eligibility lists
+`network.bodies`, and the attempt reports `network.noBody`.
 
 Details on request matching, body limits and storage:
 [docs/how-it-works.md](docs/how-it-works.md).
@@ -307,6 +320,33 @@ bugcapsule regress run                  # in CI: exit 1 when a regression fails
 bugcapsule run <id> --app-url http://127.0.0.1:4317/   # replay against a build that is already running
 ```
 
+### When is a fix FIXED (verdict v2)
+
+Two clean runs are not proof: a race that reproduces half the time also
+misses twice in a row on unchanged code. Under verdict v2 (shared by every
+BugCapsule evaluator; `@bugcapsule/web/core` exports `evaluateVerifyV2`),
+`verify` reports **FIXED** only when:
+
+1. **the baseline reproduced**: the capsule's own build reproduced the failure
+   in every one of at least 3 attempts (a mixed baseline is FLAKY; none, or
+   no baseline, is INCONCLUSIVE);
+2. **enough candidate attempts** ran, all clean: at least 5 and up to 30,
+   from the baseline's Wilson 95% lower bound (3/3 → 8, 5/5 → 6, 10/10 → 5);
+3. **each clean attempt has positive evidence** from the SDK: the capsule's
+   `BugCapsule.check` assertion ran and held, or the registered
+   `BugCapsule.expect` postconditions all held. Reports without evidence
+   (older SDKs) are INCONCLUSIVE, and a postcondition that failed is
+   STILL FAILING;
+4. the capsule is eligible and no material divergence occurred.
+
+If the only evidence is that replay got past the recorded failure point (no
+assertion or postcondition evaluated), or the capsule is `partial`, the
+result is **FIXED (QUALIFIED)**, exit code 4. Any attempt that let live
+traffic through (`--allow-live`) makes the run **UNSAFE**, exit code 5, for
+both `run` and `verify`. Neither counts as fixed on the backend. Each web
+replay report carries `evidence: { assertionPassed?, postconditions?,
+failurePointPassed }`.
+
 Each attempt opens a fresh browser context sized like the recording. The CLI
 refuses to start when something already serves `web.url`, because it might be
 an old build. See the [CLI reference](https://docs.bugcapsule.com/cli.html)
@@ -368,6 +408,19 @@ tag pointing to the capsule that replays it. Setup and details:
 Redaction runs in the browser before anything is stored or uploaded:
 sensitive keys in bodies, storage and state; sensitive headers; credentials in
 URLs; and tokens, JWTs, API keys and card numbers in free text.
+
+- Keys: anything containing `password`, `passwd`, `token`, `secret`,
+  `apikey`, `authorization`, `cookie`, `cardnumber`, `creditcard`,
+  `privatekey` or `sessionid`, and the exact names `pin`, `pan`, `otp`,
+  `ssn`, `cvv`, `cvc`, `passcode`, `iban`, `pwd`, `pass`, `csrf`, `refresh`
+  and `access` (so `author` or `accessibility` stay readable). Matching
+  ignores case, `_`, `-`, `.` and spaces.
+- URL parameters and `application/x-www-form-urlencoded` bodies also redact
+  `code`, `sig`, `key`, `auth`, `sid`, `session` and names containing
+  `signature` or `credential`.
+- Headers: `Authorization`, `Cookie`, `Set-Cookie`, `Proxy-Authorization`,
+  `X-API-Key`, `X-Auth-Token`, `X-Session`, `Authentication`, and any header
+  whose name is a sensitive key.
 
 Tighten it with `redactKeys`, `redactHeaders`, `redactPatterns`,
 `beforeRecord`, `beforeCheckpoint`, `networkIntegration({ exclude })` and
