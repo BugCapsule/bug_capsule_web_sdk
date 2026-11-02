@@ -244,7 +244,7 @@ export class Runtime implements BugCapsuleSession {
     this.sampleRandom = overrides.random ?? Math.random;
     this.integrations = [...(this.config.integrations ?? []), this.state];
     this.currentRedactor = this.baseRedactor();
-    this.captureBodies = this.config.captureNetworkBodies ?? true;
+    this.captureBodies = this.appCapturesBodies;
     if (this.config.enabled === false) this.notRecording = 'disabled';
   }
 
@@ -252,6 +252,14 @@ export class Runtime implements BugCapsuleSession {
 
   get mode() {
     return this.config.mode ?? 'production';
+  }
+
+  /**
+   * Request/response bodies: the app's `captureNetworkBodies`, else off in
+   * production and on in debug/qa. The backend can only turn them off.
+   */
+  private get appCapturesBodies(): boolean {
+    return this.config.captureNetworkBodies ?? this.mode !== 'production';
   }
   get isRecording(): boolean {
     return this.recording;
@@ -442,7 +450,7 @@ export class Runtime implements BugCapsuleSession {
     const cached = this.remote?.current ?? null;
     if (transport && this.config.monitoring !== false && cached?.enabled !== false) this.monitorClient = this.createMonitor(storage, transport);
     this.currentRedactor = this.baseRedactor(cached?.redactKeys ?? []);
-    this.captureBodies = (this.config.captureNetworkBodies ?? true) && (cached?.captureNetworkBodies ?? true);
+    this.captureBodies = this.appCapturesBodies && (cached?.captureNetworkBodies ?? true);
     this.maxCapsuleBytes = cached?.maxCapsuleBytes ?? this.maxCapsuleBytes;
     this.recording = this.decideRecording(cached);
 
@@ -1134,7 +1142,7 @@ export class Runtime implements BugCapsuleSession {
         if (this.sampleRandom() >= keep) this.stopRecording('sampled_out');
       }
     }
-    const bodies = (this.config.captureNetworkBodies ?? true) && next.captureNetworkBodies;
+    const bodies = this.appCapturesBodies && next.captureNetworkBodies;
     if (this.captureBodies && !bodies) this.recorder?.rewrite({ event: (e) => (e.type === 'http' ? { ...e, data: withoutBodies(e.data) } : e) });
     this.captureBodies = bodies;
     const wanted = [...(this.config.redactKeys ?? []), ...next.redactKeys];
