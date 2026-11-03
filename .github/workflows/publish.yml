@@ -37,7 +37,7 @@ jobs:
       id-token: write # OIDC token for trusted publishing and provenance
     steps:
       - name: Refuse anything but main
-        if: github.ref != 'refs/heads/main'
+        if: github.ref != 'refs/heads/main' && !inputs.prepare_only
         run: |
           echo "::error::publish from main only (got ${GITHUB_REF})"
           exit 1
