@@ -13,6 +13,10 @@ on:
         description: Workspaces to publish, space-separated, in dependency order
         required: true
         default: packages/web packages/react packages/web-replay packages/cli packages/emergency-guard
+      prepare_only:
+        description: Upload signed candidates for account-authenticated publishing
+        type: boolean
+        default: false
       dry_run:
         description: Run every check and `npm publish --dry-run`, publish nothing
         type: boolean
@@ -33,7 +37,7 @@ jobs:
       id-token: write # OIDC token for trusted publishing and provenance
     steps:
       - name: Refuse anything but main
-        if: github.ref != 'refs/heads/main'
+        if: github.ref != 'refs/heads/main' && !inputs.prepare_only
         run: |
           echo "::error::publish from main only (got ${GITHUB_REF})"
           exit 1
@@ -89,7 +93,21 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+      - name: Prepare signed candidates
+        if: inputs.prepare_only
+        env:
+          PACKAGES: ${{ inputs.packages }}
+        run: node scripts/prepare-provenance.cjs
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.prepare_only
+        with:
+          name: signed-npm-candidates
+          path: dist-signed/*
+          if-no-files-found: error
+
       - name: Publish
+        if: ${{ !inputs.prepare_only }}
         env:
           PACKAGES: ${{ inputs.packages }}
           DRY_RUN: ${{ inputs.dry_run }}
