@@ -56,9 +56,9 @@ bugcapsule regress ─► runs in CI from now on
 ## Install
 
 ```bash
-npm install @bugcapsule/web@beta @bugcapsule/react@beta     # @bugcapsule/react only for React apps
-npm install -D @bugcapsule/web-replay@beta             # only where you run `bugcapsule run` / `verify`
-npm install -D @bugcapsule/cli@beta                    # only for source-map upload in CI
+npm install @bugcapsule/web@0.4.0-beta.6 @bugcapsule/react@0.4.0-beta.6     # @bugcapsule/react only for React apps
+npm install -D @bugcapsule/web-replay@0.4.0-beta.6             # only where you run `bugcapsule run` / `verify`
+npm install -D @bugcapsule/cli@0.4.0-beta.6                    # only for source-map upload in CI
 ```
 
 Install `@bugcapsule/web` and `@bugcapsule/react` at the same version: the React
@@ -282,7 +282,7 @@ npm install -g @bugcapsule/cli@0.4.0-beta.6
 bugcapsule --version
 ```
 
-Direct executables are also available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1-beta.7).
+Direct executables are also available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1-beta.11).
 
 Log in with a personal token from **Project settings → Keys & CLI access**.
 In CI, use a service token in `BUGCAPSULE_TOKEN` instead.
