@@ -1,3 +1,11 @@
+# 0.4.0-beta.6 — 2026-11-03
+
+- Add Verdict v2 and positive replay evidence; deny replay network egress by default.
+- Add persisted consent, local data deletion, capture expiry, and recorder memory bounds.
+- Apply storage allowlists and stricter production redaction and remote configuration limits.
+- Harden source-map paths and ship the standalone CLI 0.4.1-beta.11 installer.
+- Include the server-side emergency-guard package.
+
 # Changelog
 
 ## Unreleased

@@ -64,7 +64,7 @@ npm install -D @bugcapsule/cli@beta                    # only for source-map upl
 Install `@bugcapsule/web` and `@bugcapsule/react` at the same version: the React
 package needs that exact version as a peer dependency.
 
-> **Versions.** SDK tokens and connection status are available starting with `0.4.0-beta.4`.
+> **Versions.** SDK tokens and connection status are available starting with `0.4.0-beta.6`.
 > Existing explicit backend configuration remains supported.
 
 ## Connect your app
@@ -278,7 +278,7 @@ The standalone `bugcapsule` CLI replays capsules from every BugCapsule SDK.
 Install it with Node.js 20 or newer; Dart and Flutter are not required.
 
 ```bash
-npm install -g @bugcapsule/cli@0.4.0-beta.4
+npm install -g @bugcapsule/cli@0.4.0-beta.6
 bugcapsule --version
 ```
 
