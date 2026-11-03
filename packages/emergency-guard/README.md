@@ -25,7 +25,7 @@ It has no runtime dependencies (`node:crypto` only), never keeps your
 process alive, and never logs your credential.
 
 ```bash
-npm install @bugcapsule/emergency-guard@beta
+npm install @bugcapsule/emergency-guard@0.4.0-beta.6
 ```
 
 ## Quick start

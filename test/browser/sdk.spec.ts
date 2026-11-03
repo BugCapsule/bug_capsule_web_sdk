@@ -145,6 +145,8 @@ test('offline capture survives a reload and uploads later', async ({ page }) => 
   await expect.poll(() => page.evaluate(() => window.BC.BugCapsule.pendingUploads())).toBe(1);
   expect(backend.uploads).toHaveLength(0);
 
+  // Persist the failed attempt before replacing this page's outbox instance.
+  await page.evaluate(() => window.BC.BugCapsule.flushUploads());
   backend.offline = false;
   await page.reload();
   await init(page);
@@ -160,6 +162,8 @@ test('a server Retry-After deadline is honoured, even across reloads', async ({ 
   await init(page);
   await page.evaluate(() => window.BC.BugCapsule.fail('retry_bug'));
   await expect.poll(() => page.evaluate(() => window.BC.BugCapsule.pendingUploads())).toBe(1);
+  // A queued entry does not mean its 503 response/deadline has been stored.
+  await page.evaluate(() => window.BC.BugCapsule.flushUploads());
   backend.uploadStatus = 201;
   await page.reload();
   await init(page);
