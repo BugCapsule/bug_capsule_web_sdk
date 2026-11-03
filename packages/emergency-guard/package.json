@@ -1,7 +1,7 @@
 {
   "name": "@bugcapsule/emergency-guard",
   "homepage": "https://bugcapsule.com",
-  "version": "0.4.0-beta.4",
+  "version": "0.4.0-beta.6",
   "description": "BugCapsule emergency recovery for Node.js servers: verify signed emergency policies and refuse irreversible operations (orders, charges) while a block is active.",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
