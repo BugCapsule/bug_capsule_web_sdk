@@ -23,12 +23,12 @@
     "test:e2e:emergency-guard": "node --import tsx --test 'test/e2e/emergency-guard.e2e.test.ts'"
   },
   "devDependencies": {
-    "@playwright/test": "1.63.0",
-    "@sentry/browser": "10.76.2",
-    "@types/node": "^24.19.2",
-    "esbuild": "^0.25.0",
+    "@playwright/test": "1.65.0",
+    "@sentry/browser": "11.11.0",
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
     "tsx": "^4.23.15",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "engines": {
     "node": ">=20"
