@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: ubuntu-24.04
+    runs-on: macos-latest
     permissions:
       contents: read
       id-token: write # OIDC token for trusted publishing and provenance
@@ -85,7 +85,7 @@ jobs:
           done
           exit $status
 
-      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npx playwright install chromium firefox webkit
 
       # The same gates as release-gates.yml: build, types, bundle size, unit,
       # runner and browser tests.
