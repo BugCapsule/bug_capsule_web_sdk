@@ -8,6 +8,10 @@
 
 # Changelog
 
+## 0.4.0 — 2026-11-19
+
+- Stable release of the Web SDK based on 0.4.0-beta.6.
+
 ## Unreleased
 
 - Add `@bugcapsule/emergency-guard`: server-side enforcement of emergency policies for Node.js 20+. Fetches and verifies the signed policy document (ES256 against the configured trust anchor), refuses replayed or expired documents, evaluates synchronously for platform `SERVER`, and throws `EmergencyBlockedError` (RFC 9457 `503` problem) before irreversible operations. Includes per-feature failure modes, `strong` consistency checks, an optional cache file, Express-style middleware and idempotency helpers. Passes the shared `spec-fixtures/emergency-v1` vectors.

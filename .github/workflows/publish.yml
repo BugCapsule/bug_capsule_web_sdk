@@ -113,9 +113,12 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          flags="--provenance --access public --tag beta"
+          flags="--provenance --access public"
           if [ "$DRY_RUN" = "true" ]; then flags="$flags --dry-run"; fi
           for dir in $PACKAGES; do
-            echo "npm publish -w $dir $flags"
-            npm publish -w "$dir" $flags
+            version=$(node -p "require('./$dir/package.json').version")
+            tag=latest
+            if [[ "$version" == *-* ]]; then tag=beta; fi
+            echo "npm publish -w $dir --tag $tag $flags"
+            npm publish -w "$dir" --tag "$tag" $flags
           done
