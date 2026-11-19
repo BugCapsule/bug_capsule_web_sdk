@@ -56,15 +56,15 @@ bugcapsule regress ─► runs in CI from now on
 ## Install
 
 ```bash
-npm install @bugcapsule/web@0.4.0-beta.6 @bugcapsule/react@0.4.0-beta.6     # @bugcapsule/react only for React apps
-npm install -D @bugcapsule/web-replay@0.4.0-beta.6             # only where you run `bugcapsule run` / `verify`
-npm install -D @bugcapsule/cli@0.4.0-beta.6                    # only for source-map upload in CI
+npm install @bugcapsule/web@0.4.0 @bugcapsule/react@0.4.0     # @bugcapsule/react only for React apps
+npm install -D @bugcapsule/web-replay@0.4.0             # only where you run `bugcapsule run` / `verify`
+npm install -D @bugcapsule/cli@0.4.0                    # only for source-map upload in CI
 ```
 
 Install `@bugcapsule/web` and `@bugcapsule/react` at the same version: the React
 package needs that exact version as a peer dependency.
 
-> **Versions.** SDK tokens and connection status are available starting with `0.4.0-beta.6`.
+> **Versions.** SDK tokens and connection status are available starting with `0.4.0`.
 > Existing explicit backend configuration remains supported.
 
 ## Connect your app
@@ -278,11 +278,11 @@ The standalone `bugcapsule` CLI replays capsules from every BugCapsule SDK.
 Install it with Node.js 20 or newer; Dart and Flutter are not required.
 
 ```bash
-npm install -g @bugcapsule/cli@0.4.0-beta.6
+npm install -g @bugcapsule/cli@0.4.0
 bugcapsule --version
 ```
 
-Direct executables are also available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1-beta.11).
+Direct executables are also available from the [CLI release](https://github.com/BugCapsule/bug_capsule_flutter_sdk/releases/tag/v0.4.1).
 
 Log in with a personal token from **Project settings → Keys & CLI access**.
 In CI, use a service token in `BUGCAPSULE_TOKEN` instead.
