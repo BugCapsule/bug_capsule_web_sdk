@@ -619,15 +619,16 @@ export class InteractionScript {
       due.push(r);
     }
     this.pending = keep;
-    for (const r of due) {
-      r.consumed = true;
-      r.at = now;
+    for (const [index, r] of due.entries()) {
       const handler = this.handlers.get(r.scope);
       if (!handler) {
         // Unbound by an earlier delivery in this batch (a close).
         this.pending.push(r);
         continue;
       }
+      r.consumed = true;
+      r.at = now;
+      const pendingBefore = this.pending.length;
       this.delivering = r.dueAt;
       try {
         handler(r);
@@ -635,6 +636,12 @@ export class InteractionScript {
         this.delivering = null;
       }
       delivered++;
+      // A synchronous reply can release an event ahead of the rest of this batch.
+      // Let the next pump sort those events together before dispatching any more.
+      if (index + 1 < due.length && this.pending.length > pendingBefore) {
+        for (let i = index + 1; i < due.length; i++) this.pending.push(due[i]!);
+        break;
+      }
     }
     return delivered;
   }
