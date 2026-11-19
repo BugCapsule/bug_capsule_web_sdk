@@ -11,7 +11,7 @@ const npa = require(path.join(globalRoot, 'npm/node_modules/npm-package-arg'));
 async function signSubject(subject) {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await generateProvenance([subject], {});
+      return await generateProvenance([subject], { timeout: 60000 });
     } catch (error) {
       if (attempt >= 3 || error.code !== 'TLOG_CREATE_ENTRY_ERROR' ||
           error.cause?.statusCode !== 409 && !error.message.includes('(409)')) throw error;
