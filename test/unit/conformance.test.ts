@@ -278,6 +278,33 @@ describe('conformance: interactions', () => {
     assert.deepEqual(stats.gaps.map((g) => g.code), ['payload.dropped']);
   });
 
+  it('keeps cross-socket order when a delayed open handler releases an earlier message', () => {
+    const event = (seq: number, t: number, type: string, conn: string): CapsuleEvent => ({
+      seq, t, type, data: { dep: 'ws', conn, ...(type === 'ws.connect' ? { key: conn } : {}) },
+    });
+    const events = [
+      event(1, 0, 'ws.connect', 'a'), event(2, 0, 'ws.connect', 'b'),
+      event(3, 4, 'ws.open', 'a'), event(4, 4, 'ws.send', 'a'),
+      event(5, 12, 'ws.open', 'b'), event(6, 12, 'ws.send', 'b'),
+      event(7, 13, 'ws.message', 'b'), event(8, 14, 'ws.message', 'a'),
+    ];
+    let now = 0;
+    const script = new InteractionScript(events, { dependencies: new Set(['ws']), clock: () => now });
+    const received: string[] = [];
+    for (const conn of ['a', 'b']) {
+      script.take('ws', 'ws.connect', conn);
+      script.bind('ws:' + conn, r => {
+        if (r.type === 'ws.open') script.takeNext(r.scope, ['ws.send']);
+        else received.push(conn);
+      });
+    }
+    now = 4;
+    script.pump();
+    now = 20;
+    while (script.nextDueAt !== null && script.nextDueAt <= now) script.pump();
+    assert.deepEqual(received, ['b', 'a']);
+  });
+
   // Same driver as `_schedule` in bug_capsule_flutter_sdk/packages/bug_capsule/tool/generate_conformance.dart.
   for (const c of f.schedules) {
     it(`schedule: ${c.name}`, () => {
